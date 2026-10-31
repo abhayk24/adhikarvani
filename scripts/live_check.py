@@ -184,6 +184,18 @@ def main() -> int:
         except Exception as e:
             say(f"- {name}: ❌ {type(e).__name__}: {e}")
 
+    # 3b. Fallback routes for sites that block cloud servers
+    say("\n### Fallback routes (Internet Archive copy, reader relay)")
+    from app import ingest
+    for u in ("https://scholarship.up.gov.in/", OFFICIAL_DOCS[0][1]):
+        for name, route in (("archive", ingest._fetch_archive), ("reader", ingest._fetch_reader)):
+            t0 = time.time()
+            try:
+                d = route(u, None)
+                say(f"- {name} {u[:60]}: ✅ {d.kind}, {len(d.data) // 1024} KB in {time.time() - t0:.1f}s ({d.via})")
+            except Exception as e:
+                say(f"- {name} {u[:60]}: ❌ {str(e)[:120]} ({time.time() - t0:.1f}s)")
+
     # 4. One real end-to-end compile
     if args.full:
         say("\n### Full compile of a real document")

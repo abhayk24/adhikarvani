@@ -42,6 +42,8 @@ class FetchedDoc:
     content_type: str = ""
     tls_verified: bool = True
     followed_from: Optional[str] = None
+    via: Optional[str] = None        # set when the site blocked us and a fallback route was used
+    via_url: Optional[str] = None
 
     @property
     def sha256(self) -> str:
@@ -112,29 +114,31 @@ def sniff_kind(data: bytes, content_type: str = "", name: str = "") -> str:
         return "unsupported"
 
 
-def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
-    url = url.strip()
-    if not urlparse(url).scheme:
-        url = "https://" + url
-    _assert_public(url)
+class _Blocked(Exception):
+    """The site refused or ignored us (typical for government sites and cloud servers)."""
+
+
+_HEADERS = {"User-Agent": config.USER_AGENT, "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
+            "Accept": "text/html,application/pdf,application/xhtml+xml,*/*;q=0.8"}
+
+
+def _fetch_direct(url: str, trace: Trace, attempts: int = 3) -> FetchedDoc:
     verify: bool | str = True
     tls_ok = True
     last_err = "unknown error"
-    for attempt in range(3):
+    for attempt in range(attempts):
         try:
-            with httpx.Client(
-                follow_redirects=True, verify=verify,
-                timeout=httpx.Timeout(35.0, connect=10.0),
-                headers={"User-Agent": config.USER_AGENT, "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
-                         "Accept": "text/html,application/pdf,application/xhtml+xml,*/*;q=0.8"},
-                event_hooks={"request": [lambda req: _assert_public(str(req.url))]},
-            ) as client:
+            with httpx.Client(follow_redirects=True, verify=verify, timeout=httpx.Timeout(35.0, connect=10.0),
+                              headers=_HEADERS, event_hooks={"request": [lambda req: _assert_public(str(req.url))]}
+                              ) as client:
                 with client.stream("GET", url) as r:
                     if r.status_code >= 400:
-                        if r.status_code >= 500 and attempt < 2:
+                        if r.status_code >= 500 and attempt < attempts - 1:
                             last_err = f"HTTP {r.status_code}"
                             time.sleep(1.5 * (attempt + 1))
                             continue
+                        if r.status_code in (401, 403, 404, 406, 410, 429, 451) or r.status_code >= 500:
+                            raise _Blocked(f"the site answered HTTP {r.status_code}")
                         raise IngestError(f"The website answered HTTP {r.status_code} for that link.")
                     buf = bytearray()
                     for chunk in r.iter_bytes():
@@ -150,7 +154,7 @@ def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
                                  + ("" if tls_ok else " (TLS chain incomplete)"))
                     return FetchedDoc(bytes(buf), kind, url=url, final_url=final, filename=name or None,
                                       content_type=ct, tls_verified=tls_ok)
-        except IngestError:
+        except (IngestError, _Blocked):
             raise
         except httpx.ConnectError as e:
             msg = str(e)
@@ -160,7 +164,7 @@ def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
                 verify, tls_ok = False, False
                 _emit(trace, tool="fetch", status="warn", detail="Site's TLS certificate chain is incomplete; retrying")
                 continue
-            last_err = "connection failed"
+            last_err = "connection refused"
         except httpx.ConnectTimeout:
             last_err = "the site did not answer"
             if attempt >= 1:  # two silent connects: the host is blocking us, stop early
@@ -169,8 +173,70 @@ def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
             last_err = type(e).__name__
         _emit(trace, tool="fetch", status="retry", detail=f"attempt {attempt + 1} failed: {last_err}")
         time.sleep(1.5 * (attempt + 1))
-    raise IngestError(f"Could not download the document ({last_err}). Some government sites block cloud "
-                      "servers: open the link in your browser, save the PDF and upload it here instead.")
+    raise _Blocked(last_err)
+
+
+def _fetch_archive(url: str, trace: Trace) -> FetchedDoc:
+    """The Internet Archive's latest copy of the same URL, as the original bytes."""
+    try:
+        r = httpx.get("https://archive.org/wayback/available", params={"url": url}, headers=_HEADERS, timeout=20)
+        snap = (r.json().get("archived_snapshots") or {}).get("closest") or {}
+    except Exception as e:
+        raise _Blocked(f"archive lookup failed ({type(e).__name__})") from e
+    if not snap.get("available") or str(snap.get("status", "200")) != "200" or not snap.get("timestamp"):
+        raise _Blocked("no archived copy")
+    ts = snap["timestamp"]
+    raw = f"https://web.archive.org/web/{ts}id_/{url}"
+    doc = _fetch_direct(raw, trace, attempts=2)
+    when = f"{ts[6:8]}-{ts[4:6]}-{ts[0:4]}"
+    doc.url, doc.final_url, doc.via_url = url, url, raw
+    doc.via = f"Internet Archive copy of this page from {when} (the site blocks cloud servers)"
+    return doc
+
+
+_READER_FAIL = ("access denied", "403 forbidden", "error 403", "timed out", "could not be reached",
+                "failed to fetch", "target url returned error")
+
+
+def _fetch_reader(url: str, trace: Trace) -> FetchedDoc:
+    """A reader relay (r.jina.ai) that fetches the page from its own servers and returns its text."""
+    try:
+        r = httpx.get(f"https://r.jina.ai/{url}", headers={"User-Agent": config.USER_AGENT, "Accept": "text/plain"},
+                      timeout=httpx.Timeout(60.0, connect=10.0))
+    except Exception as e:
+        raise _Blocked(f"reader relay unreachable ({type(e).__name__})") from e
+    body = r.text.split("Markdown Content:", 1)[-1].strip()
+    if r.status_code != 200 or len(body) < 300 or any(f in body[:800].lower() for f in _READER_FAIL):
+        raise _Blocked("reader relay could not read the page")
+    return FetchedDoc(body.encode("utf-8"), "text", url=url, final_url=url, content_type="text/plain",
+                      via="text read through a reader relay (r.jina.ai) because the site blocks cloud servers",
+                      via_url=f"https://r.jina.ai/{url}")
+
+
+def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
+    """Fetch an official document. If the site blocks cloud servers, fall back to the Internet
+    Archive's copy of the same URL, then to a reader relay; the card records which route was used."""
+    url = url.strip()
+    if not urlparse(url).scheme:
+        url = "https://" + url
+    _assert_public(url)
+    try:
+        return _fetch_direct(url, trace)
+    except _Blocked as e:
+        reasons = [f"direct: {e}"]
+        _emit(trace, tool="fetch", status="warn",
+              detail=f"{urlparse(url).hostname} blocked us ({e}); trying the Internet Archive copy")
+    for name, route in (("Internet Archive", _fetch_archive), ("reader relay", _fetch_reader)):
+        try:
+            doc = route(url, trace)
+            _emit(trace, tool="fetch", status="ok", detail=f"read via {name}: {doc.via}")
+            return doc
+        except (_Blocked, IngestError) as e:
+            reasons.append(f"{name}: {e}")
+            _emit(trace, tool="fetch", status="warn", detail=f"{name} did not work ({e})")
+    raise IngestError("This site blocks cloud servers and no archived copy could be read "
+                      f"({'; '.join(reasons)}). Open the link in your browser and upload the PDF, "
+                      "or paste the page text, and AdhikarVani will compile that instead.")
 
 
 # ------------------------------------------------------------------ parse --

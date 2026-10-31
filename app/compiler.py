@@ -251,8 +251,13 @@ def n_fetch(s: dict) -> None:
         if len(inp.file_bytes) > config.MAX_DOWNLOAD_BYTES:
             raise CompileError("File is larger than 25 MB.")
         kind = sniff_kind(inp.file_bytes, "", inp.filename or "")
-        s["fetched"] = FetchedDoc(inp.file_bytes, kind, filename=inp.filename)
-        s["_detail"] = f"uploaded {inp.filename or 'file'} ({len(inp.file_bytes) / 1024:.0f} KB, {kind})"
+        doc = FetchedDoc(inp.file_bytes, kind, filename=inp.filename)
+        if inp.url:  # text pasted or file saved by the user from this official page
+            doc.url = doc.final_url = inp.url
+            doc.via = f"{'text pasted' if inp.filename == 'pasted text' else 'file uploaded'} by the user from this page"
+        s["fetched"] = doc
+        s["_detail"] = f"{inp.filename or 'file'} ({len(inp.file_bytes) / 1024:.0f} KB, {kind})" + \
+                       (f" from {doc.domain}" if inp.url else "")
     else:
         if not inp.url:
             raise CompileError("Give a link or upload a file.")
@@ -414,7 +419,7 @@ def n_self_correct(s: dict) -> None:
             format_clauses(ctx) + '\n\nReturn JSON: {"repaired": [{"id": "K4", "kind": "...", "text": "...", '
             '"quote": "...", "clause_id": "C7", "audience": "citizen"}], "dropped": [{"id": "K9", "reason": "..."}]}')
     try:
-        data, _ = llm.chat_json(task="self-correct claims", profile="heavy", system=CORRECT_SYSTEM, user=user,
+        data, _ = llm.chat_json(task="self-correct claims", profile="logic", system=CORRECT_SYSTEM, user=user,
                                 max_tokens=4000, trace=_trace(s), deadline_s=100)
     except llm.LLMError:
         s["_detail"] = "repair model unavailable; failed claims will be rejected"
@@ -479,7 +484,7 @@ def n_compile_rules(s: dict) -> None:
                     "\nPREVIOUS ANSWER:\n" + json.dumps(s.get("raw_rules"), ensure_ascii=False)[:6000])
     user = RULES_USER.format(conditions=_conditions_text(conds), catalog=catalog_lines(), feedback=feedback)
     try:
-        data, meta = llm.chat_json(task="compile rules", profile="heavy", system=RULES_SYSTEM, user=user,
+        data, meta = llm.chat_json(task="compile rules", profile="logic", system=RULES_SYSTEM, user=user,
                                    max_tokens=5000, trace=_trace(s), deadline_s=120)
     except llm.LLMError as e:
         s["raw_rules"] = None
@@ -629,7 +634,7 @@ def _draft_card(s: dict) -> PolicyCard:
                      sha256=fetched.sha256, tls_verified=fetched.tls_verified, pages=len(parsed.pages),
                      language=parsed.language, ocr_used=parsed.ocr_used, ocr_pages=parsed.ocr_pages,
                      domain=fetched.domain, official=config.is_official_domain(fetched.domain), chars=len(parsed.text),
-                     followed_from=fetched.followed_from)
+                     followed_from=fetched.followed_from, via=fetched.via, via_url=fetched.via_url)
     used_ids = {c.clause_id for c in s["claims"]}
     keep_clauses = [c for c in s["clauses"] if c.id in used_ids]
     return PolicyCard(

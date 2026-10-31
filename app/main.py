@@ -102,9 +102,13 @@ def pulse(lang: str = "en"):
 # ---------------------------------------------------------------- compile --
 @app.post("/api/compile")
 async def compile_endpoint(url: Optional[str] = Form(None), lang: str = Form("hi"), force: bool = Form(False),
-                           file: Optional[UploadFile] = File(None)):
+                           text: Optional[str] = Form(None), file: Optional[UploadFile] = File(None)):
     data, name = None, None
-    if file is not None and file.filename:
+    if text and text.strip():
+        if len(text.strip()) < 200:
+            raise HTTPException(400, "Paste the full text of the document (at least a few sentences).")
+        data, name = text.strip()[:400_000].encode("utf-8"), "pasted text"
+    elif file is not None and file.filename:
         data = await file.read(config.MAX_DOWNLOAD_BYTES + 1)
         if len(data) > config.MAX_DOWNLOAD_BYTES:
             raise HTTPException(413, "File is larger than 25 MB.")

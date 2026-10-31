@@ -74,7 +74,7 @@ A document is fetched (private-network addresses blocked, redirects re-checked, 
 | Layer | Choice |
 |---|---|
 | Backend | Python 3.11, FastAPI, Server-Sent Events for the live agent trace |
-| LLMs (free tiers) | Google Gemini Flash (long-context extraction), Groq (gpt-oss, Llama; fast checks), optional Cerebras, Mistral, OpenRouter; automatic model discovery and failover |
+| LLMs (free tiers) | Google Gemini 3.5/2.5 Flash for long documents and Indian-language writing; Groq gpt-oss-120b/20b for rules, repairs, fact-checks and chat; optional Cerebras, Mistral, OpenRouter. Streaming calls with stall detection, model discovery and failover |
 | Speech | Whisper large-v3 on Groq (ASR), Microsoft Edge neural voices via `edge-tts` and gTTS fallback (TTS), ffmpeg |
 | Documents | PDFium (`pypdfium2`), Tesseract OCR with 11 Indic language packs, trafilatura, BeautifulSoup |
 | Retrieval and verification | Custom BM25 with Unicode-aware tokenisation, reciprocal rank fusion, RapidFuzz |
@@ -129,6 +129,8 @@ Every push to `main` also runs `.github/workflows/deploy.yml`:
 3. runs `scripts/live_check.py`: pings every AI provider, does a Hindi TTS→ASR round trip, fetches the PIB feed and official PDFs, and compiles a real scheme document end to end;
 4. checks the live app's `/api/health`;
 5. writes the report to the job summary and the `ci-reports` branch.
+
+`scripts/ingest.py` (run by the same workflow) compiles the official documents in `deploy/sources.txt` from CI, because some government sites block the app's cloud region, and publishes the cards to the dataset; the app pulls new cards every 5 minutes.
 
 `.github/workflows/keepalive.yml` pings the app every 10 minutes so Render's free instance does not fall asleep during judging.
 

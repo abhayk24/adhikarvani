@@ -66,6 +66,8 @@ PROVIDERS: list[Provider] = [
             "heavy": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
             "write": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
             "fast": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]),
+            "logic": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
+            "chat": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-2.5-flash"]),
         },
         char_budget=120_000,
     ),
@@ -78,36 +80,42 @@ PROVIDERS: list[Provider] = [
                                                "llama-3.3-70b-versatile", r"re:^qwen/qwen3"]),
             "fast": _env_list("GROQ_FAST_MODELS", ["openai/gpt-oss-20b", "llama-3.3-70b-versatile",
                                                    "openai/gpt-oss-120b", "llama-3.1-8b-instant"]),
+            "logic": _env_list("GROQ_MODELS", ["openai/gpt-oss-120b", r"re:^qwen/qwen3", "openai/gpt-oss-20b"]),
+            "chat": _env_list("GROQ_MODELS", ["openai/gpt-oss-120b", "openai/gpt-oss-20b", r"re:^qwen/qwen3"]),
         },
         char_budget=9_000,
         max_output=4200,
     ),
     Provider(
         "cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
-        {p: ["gpt-oss-120b", "llama-3.3-70b", r"re:^qwen-3", "llama3.1-8b"] for p in ("heavy", "write", "fast")},
+        {p: ["gpt-oss-120b", "llama-3.3-70b", r"re:^qwen-3", "llama3.1-8b"] for p in ("heavy", "write", "fast", "logic", "chat")},
         char_budget=24_000,
     ),
     Provider(
         "mistral", "Mistral", "https://api.mistral.ai/v1", "MISTRAL_API_KEY",
-        {p: ["mistral-medium-latest", "mistral-small-latest"] for p in ("heavy", "write", "fast")},
+        {p: ["mistral-medium-latest", "mistral-small-latest"] for p in ("heavy", "write", "fast", "logic", "chat")},
         char_budget=60_000,
     ),
     Provider(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
         {p: ["openai/gpt-oss-120b:free", r"re:^meta-llama/llama-3\.3-70b-instruct:free$",
-             r"re:^deepseek/deepseek-chat.*:free$", r"re:^qwen/qwen3.*:free$"] for p in ("heavy", "write", "fast")},
+             r"re:^deepseek/deepseek-chat.*:free$", r"re:^qwen/qwen3.*:free$"] for p in ("heavy", "write", "fast", "logic", "chat")},
         char_budget=30_000,
         extra_headers={"HTTP-Referer": "https://huggingface.co/spaces", "X-Title": "AdhikarVani"},
     ),
 ]
 PROVIDER_BY_NAME = {p.name: p for p in PROVIDERS}
 
+# Gemini's free daily quota is small, so it is used where it matters most (long documents,
+# Indian-language writing); structured reasoning and chat go to Groq first.
 PROFILE_ORDER = {
-    "heavy": ["gemini", "groq", "cerebras", "mistral", "openrouter"],
-    "write": ["gemini", "groq", "cerebras", "mistral", "openrouter"],
-    "fast": ["groq", "gemini", "cerebras", "mistral", "openrouter"],
+    "heavy": ["gemini", "groq", "cerebras", "mistral", "openrouter"],   # read long documents
+    "write": ["gemini", "groq", "cerebras", "mistral", "openrouter"],   # explainers in 11 languages
+    "logic": ["groq", "cerebras", "gemini", "mistral", "openrouter"],   # rules, repairs
+    "chat": ["groq", "cerebras", "gemini", "mistral", "openrouter"],    # voice-agent replies
+    "fast": ["groq", "gemini", "cerebras", "mistral", "openrouter"],    # short checks
 }
-PROFILE_TIMEOUT = {"heavy": 150.0, "write": 90.0, "fast": 45.0}   # total per attempt while streaming
+PROFILE_TIMEOUT = {"heavy": 150.0, "write": 90.0, "logic": 120.0, "chat": 45.0, "fast": 45.0}   # total per attempt while streaming
 
 _client = httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0))
 _models_cache: dict[str, tuple[float, Optional[set[str]]]] = {}
@@ -187,7 +195,7 @@ def configured_providers() -> list[str]:
 def active_models() -> dict[str, Any]:
     """What the router would use right now (cached discovery only, never blocks on the network)."""
     out: dict[str, Any] = {}
-    for profile in ("heavy", "write", "fast"):
+    for profile in ("heavy", "write", "logic", "chat", "fast"):
         rows = []
         for name in PROFILE_ORDER[profile]:
             p = PROVIDER_BY_NAME[name]
@@ -264,7 +272,7 @@ class _Skip(Exception):
     """Candidate unusable for this call; move on."""
 
 
-STALL_S = {"heavy": 45.0, "write": 40.0, "fast": 25.0}   # max silence between streamed chunks
+STALL_S = {"heavy": 45.0, "write": 40.0, "logic": 45.0, "chat": 25.0, "fast": 25.0}   # max silence between streamed chunks
 
 
 def _handle_error(p: Provider, model: str, code: int, text: str, json_mode: bool, effort: Optional[str],

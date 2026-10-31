@@ -56,6 +56,7 @@ speech ─► Whisper ─► LLM extracts facts, each with the citizen's own wor
 * **Government TLS quirk:** many `.gov.in` sites send an incomplete certificate chain. We retry once without verification, mark the card *"site certificate incomplete"* and store the document's SHA-256 fingerprint.
 * **PDF text** comes from PDFium. A page with under 80 characters is treated as scanned. Pages typed in old Hindi fonts (Kruti Dev) extract as Latin gibberish like `ljdkj` (सरकार); `looks_legacy_font` counts such markers and sends those pages to OCR too.
 * **OCR:** Tesseract first runs script detection (OSD) and then OCRs with the right language pack (Hindi, Bengali, Tamil, ... 11 installed).
+* **Broken Hindi text layers:** some PDFs map their font to the wrong Unicode letters (`औय` for `और`). `looks_garbled_devanagari` counts letters that almost never occur in real Hindi plus vowel signs floating after spaces; such pages are OCR'd from the rendered image instead.
 * **Landing pages:** if a web page has little text but links to a PDF (guidelines, notification, yojana...), the agent follows that link.
 * Text that looks like instructions to an AI ("ignore previous instructions") is flagged; it can't do harm because every claim must still quote the document.
 
@@ -112,7 +113,17 @@ Numbers are extracted from the explainer, with Indic digits converted, `2.5 ल�
 ### 4.11 LLM router (`llm.py`)
 * All providers speak the OpenAI chat format, so one HTTP client covers them.
 * Every call is **streamed**. If a model sends nothing for 25 to 45 seconds it is abandoned and its whole provider is rested for a minute, so failover is quick; a long answer that keeps streaming is never cut off. (We measured this matters: on the free tier the newest Gemini models sometimes accept a request and then go silent.)
-* At startup it lists the models each key can use (`GET /models`) and picks per *profile*: **heavy** (long documents: Gemini 3.5 Flash, then 2.5 Flash), **fast** (short checks: Groq gpt-oss-20b first), **write** (multilingual: Gemini first). The order can be changed without code through `GEMINI_MODELS`, `GROQ_MODELS` etc.
+* At startup it lists the models each key can use (`GET /models`) and picks per *profile*. Gemini's free daily quota is small, so it is spent only where it matters:
+
+  | Profile | Used for | Tried first |
+  |---|---|---|
+  | heavy | reading long documents | Gemini 3.5 Flash, then 2.5 Flash |
+  | write | explainers in 11 languages | Gemini |
+  | logic | compiling rules, repairing claims | Groq gpt-oss-120b |
+  | chat | voice-agent replies | Groq gpt-oss-120b |
+  | fast | fact-checks, understanding the citizen | Groq gpt-oss-20b |
+
+  The order can be changed without code through `GEMINI_MODELS`, `GROQ_MODELS` etc.
 * On 429 it reads `Retry-After` (or Groq's "try again in 7.5s") and cools that model down; daily-quota errors cool for 30 minutes; "request too large" skips to a model with a bigger budget; 404/decommissioned models and bad keys are disabled; 5xx and timeouts fail over.
 * If every model is cooling down for under 30 s it waits; otherwise it reports a clear error.
 * Invalid JSON is repaired by sending the model its own reply plus the parse error.
@@ -126,7 +137,9 @@ Numbers are extracted from the explainer, with Indic digits converted, `2.5 ल�
 | Compiled cards | Hugging Face dataset `Abhayk24/adhikarvani-store` | Survives restarts; Render's disk is temporary |
 | Keep-awake | GitHub Actions ping every 10 minutes | Render's free tier sleeps after 15 idle minutes |
 
-Every push runs the tests, a live check of each AI provider and speech service, a full compile of the real PM-KISAN guidelines, and a walkthrough of the deployed app through its public API. The report lands on the `ci-reports` branch.
+Every push runs the tests, a live check of each AI provider and speech service, an **ingestion job** and a walkthrough of the deployed app through its public API. The report lands on the `ci-reports` branch.
+
+**Ingestion job (`scripts/ingest.py`):** some government sites (pmkisan.gov.in, for example) refuse connections from the app's cloud region. CI can reach them, so it compiles the official documents listed in `deploy/sources.txt` with the same pipeline and publishes the cards to the dataset; the live app pulls new cards every 5 minutes. Documents already compiled are skipped (same SHA-256), so this costs no AI calls after the first time. A user can still compile anything live, or upload a PDF.
 
 ## 6. Robustness and edge cases
 

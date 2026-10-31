@@ -215,7 +215,7 @@ def run_turn(inp: TurnInput, store, trace: Trace = None) -> dict:
     say, warn = None, None
     for attempt in range(2):
         try:
-            data, _ = llm.chat_json(task=f"reply in {LANGS[lang]['name']}", profile="write",
+            data, _ = llm.chat_json(task=f"reply in {LANGS[lang]['name']}", profile="chat",
                                     system=REPLY_SYSTEM.format(lang=describe(lang)),
                                     user=REPLY_USER.format(situation=json.dumps(sit, ensure_ascii=False, indent=1)),
                                     max_tokens=900, temperature=0.3, trace=trace, deadline_s=50)

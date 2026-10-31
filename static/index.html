@@ -43,7 +43,12 @@
           <p class="file-label" lang="hi">फ़ाइल संख्या: नई</p>
           <label class="field-label" for="url">Link to the document</label>
           <input id="url" name="url" type="url" inputmode="url" placeholder="https://… .gov.in/…/guidelines.pdf" aria-describedby="url-help">
-          <p id="url-help" class="help">PDF, web page or scanned copy. Or upload a file instead.</p>
+          <p id="url-help" class="help">PDF, web page or scanned copy. Or upload a file instead.
+            <button type="button" class="link-btn" id="paste-toggle">Paste the text instead</button></p>
+          <div class="paste" id="paste-box" hidden>
+            <label class="field-label" for="paste">Document text</label>
+            <textarea id="paste" name="text" rows="6" placeholder="Paste the text of the notice or scheme here. Keep its link above so the card records the source."></textarea>
+          </div>
           <div class="file-row">
             <label class="upload">
               <input id="file" name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.html,.htm">

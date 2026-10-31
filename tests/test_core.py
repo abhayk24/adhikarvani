@@ -179,3 +179,49 @@ def test_broken_hindi_text_layer_is_detected():
              "सहायता देना है ताकि वे खेती से जुड़ी जरूरतें पूरी कर सकें और अपनी आजीविका सुरक्षित कर सकें।") * 2
     assert looks_garbled_devanagari(broken)
     assert not looks_garbled_devanagari(clean)
+
+
+def test_blocked_government_site_falls_back_to_archive_then_reader(monkeypatch):
+    import pytest
+    from app import ingest
+    monkeypatch.setattr(ingest, "_assert_public", lambda url: None)
+
+    def direct(url, trace, attempts=3):
+        if "web.archive.org" in url:
+            return ingest.FetchedDoc(b"%PDF-1.4 archived", "pdf", url=url, final_url=url)
+        raise ingest._Blocked("the site did not answer")
+
+    class Avail:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"archived_snapshots": {"closest": {"available": True, "status": "200", "timestamp": "20250314120000"}}}
+
+    monkeypatch.setattr(ingest, "_fetch_direct", direct)
+    monkeypatch.setattr(ingest.httpx, "get", lambda *a, **k: Avail())
+    doc = ingest.fetch_url("https://scholarship.up.gov.in/guidelines.pdf")
+    assert doc.via.startswith("Internet Archive copy") and "14-03-2025" in doc.via
+    assert doc.domain == "scholarship.up.gov.in" and doc.data.startswith(b"%PDF")
+
+    class Reader:  # no archived copy: the reader relay is used next
+        status_code = 200
+        text = "Title: Scholarship\nMarkdown Content:\n" + "Eligibility: students whose family income is below 2 lakh. " * 10
+
+        def json(self):
+            return {"archived_snapshots": {}}
+
+    monkeypatch.setattr(ingest.httpx, "get", lambda *a, **k: Reader())
+    doc = ingest.fetch_url("https://scholarship.up.gov.in/")
+    assert doc.kind == "text" and "reader relay" in doc.via
+
+    class Nothing:
+        status_code = 403
+        text = "Access denied"
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr(ingest.httpx, "get", lambda *a, **k: Nothing())
+    with pytest.raises(ingest.IngestError, match="upload the PDF"):
+        ingest.fetch_url("https://scholarship.up.gov.in/")

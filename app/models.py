@@ -99,6 +99,8 @@ class SourceMeta(BaseModel):
     official: bool = False
     chars: int = 0
     followed_from: Optional[str] = None
+    via: Optional[str] = None
+    via_url: Optional[str] = None
 
 
 class Stats(BaseModel):

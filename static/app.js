@@ -115,6 +115,11 @@
       if (fileInput.files[0]) $("#url").value = "";
     });
     $("#compile-form").addEventListener("submit", (e) => { e.preventDefault(); startCompile(); });
+    $("#paste-toggle").addEventListener("click", () => {
+      const box = $("#paste-box");
+      box.hidden = !box.hidden;
+      if (!box.hidden) $("#paste").focus();
+    });
     $$("[data-pulse]").forEach((b) => b.addEventListener("click", () => {
       $$("[data-pulse]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       loadPulse(b.dataset.pulse);
@@ -180,16 +185,19 @@
   async function startCompile() {
     const url = $("#url").value.trim();
     const file = $("#file").files[0];
+    const pasted = $("#paste-box").hidden ? "" : $("#paste").value.trim();
     const errEl = $("#compile-error");
     errEl.hidden = true;
-    if (!url && !file) {
-      errEl.textContent = "Paste a link to a government document or upload a file.";
+    if (!url && !file && !pasted) {
+      errEl.textContent = "Paste a link to a government document, upload a file, or paste its text.";
       errEl.hidden = false;
       $("#url").focus();
       return;
     }
     const fd = new FormData();
-    if (file) fd.append("file", file); else fd.append("url", url);
+    if (pasted) { fd.append("text", pasted); if (url) fd.append("url", url); }
+    else if (file) { fd.append("file", file); if (url) fd.append("url", url); }
+    else fd.append("url", url);
     fd.append("lang", $("#lang").value);
     const btn = $("#compile-btn");
     btn.disabled = true;
@@ -289,7 +297,13 @@
         $("a", act).focus();
         loadRegister();
       } else {
-        act.innerHTML = `<p class="form-error">${esc(ev.error || "Compilation failed.")}</p>`;
+        const blocked = /block|upload the PDF|paste/i.test(ev.error || "");
+        act.innerHTML = `<p class="form-error">${esc(ev.error || "Compilation failed.")}</p>` + (blocked ? `
+          <div class="recover"><a class="btn btn-small" href="${esc(safeUrl($("#url").value.trim()) || "#")}" target="_blank" rel="noopener">Open the page</a>
+          <button class="btn btn-small" type="button" id="rec-upload">Upload the saved PDF</button>
+          <button class="btn btn-small" type="button" id="rec-paste">Paste its text</button></div>` : "");
+        $("#rec-upload")?.addEventListener("click", () => $("#file").click());
+        $("#rec-paste")?.addEventListener("click", () => { $("#paste-box").hidden = false; $("#paste").focus(); });
       }
     }
 
@@ -350,6 +364,7 @@
       src.official ? `<span class="badge ok">Official source: ${esc(src.domain)}</span>` : src.domain ? `<span class="badge warn">Not a government domain: ${esc(src.domain)}</span>` : `<span class="badge">Uploaded file</span>`,
       src.ocr_used ? `<span class="badge">Read with OCR (${src.ocr_pages} page${src.ocr_pages === 1 ? "" : "s"})</span>` : "",
       src.tls_verified === false ? `<span class="badge warn">Site certificate incomplete</span>` : "",
+      src.via ? `<span class="badge warn" title="${esc(src.via_url || "")}">Read via: ${esc(src.via)}</span>` : "",
       card.is_policy_document === false ? `<span class="badge warn">May not be a policy document</span>` : "",
     ].join("");
     const groups = GROUPS.map(([kind, label]) => {
