@@ -16,6 +16,7 @@ import httpx
 import regex
 
 from . import config
+from .text_utils import detect_script_lang
 
 PIB_FEEDS = {
     "en": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
@@ -52,36 +53,57 @@ def _strip(s: str) -> str:
     return " ".join(html.unescape(regex.sub(r"<[^>]+>", " ", s or "")).split())
 
 
-def pib_feed(lang: str = "en", limit: int = 30) -> dict:
-    lang = lang if lang in PIB_FEEDS else "en"
-    with _lock:
-        hit = _cache.get(lang)
-        if hit and time.time() - hit[0] < TTL:
-            return hit[1] | {"cached": True}
+def _fetch_feed(url: str) -> list[dict]:
     import feedparser
-    url = PIB_FEEDS[lang]
-    try:
-        parsed = feedparser.parse(_get(url))
-    except SourceError:
-        if hit:  # serve the last good copy when PIB is down
-            return hit[1] | {"cached": True, "stale": True}
-        raise
+    parsed = feedparser.parse(_get(url))
     items = []
-    for e in parsed.entries[:limit]:
+    for e in parsed.entries:
         link = (e.get("link") or "").strip().replace("http://", "https://")
         if not link:
             continue
         pub: Optional[str] = None
         if e.get("published_parsed"):
             pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc).isoformat()
-        items.append({"title": _strip(e.get("title", ""))[:300], "link": link, "published": pub,
-                      "summary": _strip(e.get("summary", ""))[:300]})
-    if not items:
-        if hit:
-            return hit[1] | {"cached": True, "stale": True}
-        raise SourceError("PIB feed returned no items")
-    out = {"source": url, "lang": lang, "items": items,
-           "fetched_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}
+        title = _strip(e.get("title", ""))[:300]
+        items.append({"title": title, "link": link, "published": pub, "summary": _strip(e.get("summary", ""))[:300],
+                      "lang": "hi" if detect_script_lang(title) == "hi" else "en"})
+    return items
+
+
+def pib_feed(lang: str = "en", limit: int = 30) -> dict:
+    """Latest PIB releases in the requested language.
+
+    PIB's feeds do not always respect their language parameter, so both feeds are
+    read, merged, and each release is sorted into English or Hindi by its script.
+    """
+    lang = lang if lang in PIB_FEEDS else "en"
     with _lock:
-        _cache[lang] = (time.time(), out)
-    return out | {"cached": False}
+        hit = _cache.get("all")
+    if hit and time.time() - hit[0] < TTL:
+        merged, fetched_at, stale = hit[1]["items"], hit[1]["fetched_at"], False
+    else:
+        merged, errors, seen = [], [], set()
+        for url in PIB_FEEDS.values():
+            try:
+                for it in _fetch_feed(url):
+                    if it["link"] not in seen:
+                        seen.add(it["link"])
+                        merged.append(it)
+            except SourceError as e:
+                errors.append(str(e))
+        if merged:
+            merged.sort(key=lambda it: it["published"] or "", reverse=True)
+            fetched_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            with _lock:
+                _cache["all"] = (time.time(), {"items": merged, "fetched_at": fetched_at})
+            stale = False
+        elif hit:  # PIB is down: serve the last good copy
+            merged, fetched_at, stale = hit[1]["items"], hit[1]["fetched_at"], True
+        else:
+            raise SourceError("; ".join(errors) or "PIB feed returned no items")
+    chosen = [it for it in merged if it["lang"] == lang]
+    note = None
+    if not chosen:
+        chosen, note = merged, f"PIB has no {'English' if lang == 'en' else 'Hindi'} releases in its feed right now"
+    return {"source": "https://pib.gov.in (RSS)", "lang": lang, "items": chosen[:limit], "fetched_at": fetched_at,
+            "stale": stale, "note": note}

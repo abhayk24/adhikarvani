@@ -37,6 +37,56 @@ OFFICIAL_DOCS = [
 ]
 
 
+def gemini_diagnostics(say) -> None:
+    """Time to first token and total time per Gemini model and option set (streamed)."""
+    from app import llm
+    import httpx
+    p = llm.PROVIDER_BY_NAME["gemini"]
+    if not p.key():
+        return
+    say("- Gemini latency by model (streamed; json = JSON mode, low = reasoning_effort low):")
+    tests = [("gemini-2.5-flash", True, "low"), ("gemini-2.5-flash", False, None), ("gemini-3.5-flash", True, "low"),
+             ("gemini-3.5-flash", False, None), ("gemini-3.8-flash", True, "low"), ("gemini-flash-latest", True, "low"),
+             ("gemini-2.5-flash-lite", True, "low"), ("gemini-3.5-flash-lite", True, "low")]
+    for model, js, eff in tests:
+        body = {"model": model, "stream": True, "max_tokens": 400,
+                "messages": [{"role": "user", "content": 'Reply with the JSON object {"ok": true}'}]}
+        if js:
+            body["response_format"] = {"type": "json_object"}
+        if eff:
+            body["reasoning_effort"] = eff
+        t0, first, text, status = time.time(), None, "", None
+        try:
+            with httpx.stream("POST", f"{p.base_url}/chat/completions", headers=llm._headers(p), json=body,
+                              timeout=httpx.Timeout(connect=10, read=35, write=10, pool=10)) as r:
+                status = r.status_code
+                if status != 200:
+                    r.read()
+                    text = r.text[:140].replace("\n", " ")
+                else:
+                    for line in r.iter_lines():
+                        if line.startswith("data:") and first is None:
+                            first = time.time() - t0
+                        if line.startswith("data:") and "[DONE]" not in line:
+                            try:
+                                for ch in json.loads(line[5:]).get("choices") or []:
+                                    text += (ch.get("delta") or {}).get("content") or ""
+                            except Exception:
+                                pass
+            fb = f"{first:.1f}s" if first is not None else "none"
+            say(f"  - {model} json={js} effort={eff}: HTTP {status}, first chunk {fb}, total {time.time() - t0:.1f}s → {text[:60]!r}")
+        except Exception as e:
+            say(f"  - {model} json={js} effort={eff}: {type(e).__name__} after {time.time() - t0:.1f}s")
+    try:
+        t0 = time.time()
+        r = httpx.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                       headers={"x-goog-api-key": p.key()}, timeout=40,
+                       json={"contents": [{"parts": [{"text": "Say ok"}]}]})
+        say(f"  - native generateContent gemini-2.5-flash: HTTP {r.status_code} in {time.time() - t0:.1f}s")
+    except Exception as e:
+        say(f"  - native generateContent: {type(e).__name__}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", default="report.md")
@@ -79,6 +129,8 @@ def main() -> int:
         except Exception as e:
             say(f"- ping {prof}: ❌ {e}")
 
+    gemini_diagnostics(say)
+
     # 2. Speech
     say("\n### Speech")
     try:
@@ -111,7 +163,8 @@ def main() -> int:
         try:
             feed = sources.pib_feed(lang)
             first = feed["items"][0]
-            say(f"- PIB feed {lang}: ✅ {len(feed['items'])} items; latest: {first['title'][:90]}")
+            say(f"- PIB feed {lang}: ✅ {len(feed['items'])} items{' (' + feed['note'] + ')' if feed.get('note') else ''}; "
+                f"latest: {first['title'][:90]}")
             if lang == "en":
                 doc = fetch_url(first["link"])
                 parsed = parse_document(doc)
@@ -132,7 +185,7 @@ def main() -> int:
         say("\n### Full compile of a real document")
         store = Store(Path(os.environ["DATA_DIR"]))
         events = []
-        url = os.getenv("E2E_URL", OFFICIAL_DOCS[0][1])
+        url = os.getenv("E2E_URL", "").strip() or OFFICIAL_DOCS[0][1]
         try:
             t0 = time.time()
             card = compile_policy(CompileInput(url=url, lang="hi"), events.append, store)
@@ -151,6 +204,15 @@ def main() -> int:
         except Exception as e:
             say(f"- ❌ {type(e).__name__}: {e}")
             say("```\n" + traceback.format_exc()[-1500:] + "\n```")
+        try:
+            t0 = time.time()
+            hi = compile_policy(CompileInput(url=OFFICIAL_DOCS[3][1], lang="hi"), lambda e: None, store)
+            say(f"- ✅ Hindi PDF “{hi.title}” in {time.time() - t0:.0f} s: {hi.stats.verified} verified, "
+                f"{hi.stats.rejected} rejected, {len(hi.rules)} rules")
+            for c in hi.claims[:3]:
+                say(f"  - [{c.kind}] {c.text}  _(quote: {c.quote[:70]})_")
+        except Exception as e:
+            say(f"- ❌ Hindi PDF compile: {type(e).__name__}: {e}")
         say("\n<details><summary>Trace</summary>\n")
         for ev in events:
             if ev.get("type") in ("node", "llm", "guard", "info", "tool"):

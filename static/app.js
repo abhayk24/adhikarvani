@@ -129,10 +129,10 @@
     list.innerHTML = '<li class="muted">Loading the live feed…</li>';
     try {
       const feed = await api(`/api/pulse?lang=${lang}`);
-      $("#pulse-sub").textContent = `Live from pib.gov.in, fetched ${timeAgo(feed.fetched_at)}${feed.stale ? " (PIB is slow, showing the last copy)" : ""}.`;
+      $("#pulse-sub").textContent = `Live from pib.gov.in, fetched ${timeAgo(feed.fetched_at)}${feed.stale ? " (PIB is slow, showing the last copy)" : ""}.${feed.note ? " " + feed.note + "." : ""}`;
       list.innerHTML = feed.items.map((it, i) => `
         <li>
-          <a class="pulse-title" href="${esc(safeUrl(it.link) || "#")}" target="_blank" rel="noopener" ${lang === "hi" ? 'lang="hi"' : ""}>${esc(it.title)}</a>
+          <a class="pulse-title" href="${esc(safeUrl(it.link) || "#")}" target="_blank" rel="noopener" lang="${it.lang === "hi" ? "hi" : "en"}">${esc(it.title)}</a>
           <div class="pulse-meta"><span>${esc(timeAgo(it.published))}</span>
           <button class="link-btn" type="button" data-explain="${i}">Explain this release</button></div>
         </li>`).join("");

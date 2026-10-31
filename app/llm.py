@@ -47,6 +47,12 @@ class Provider:
         return os.getenv(self.key_env, "").strip()
 
 
+def _env_list(name: str, default: list[str]) -> list[str]:
+    """Model preference list, overridable with a comma-separated environment variable."""
+    raw = os.getenv(name, "").strip()
+    return [m.strip() for m in raw.split(",") if m.strip()] or default
+
+
 _GEMINI_FLASH = r"re:^gemini-\d+(?:\.\d+)?-flash(?:-preview(?:-\d{2}-\d{4})?)?$"
 _GEMINI_LITE = r"re:^gemini-\d+(?:\.\d+)?-flash-lite(?:-preview(?:-\d{2}-\d{4})?)?$"
 
@@ -54,20 +60,22 @@ PROVIDERS: list[Provider] = [
     Provider(
         "gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY",
         {
-            "heavy": ["gemini-flash-latest", _GEMINI_FLASH, "gemini-2.5-flash"],
-            "write": ["gemini-flash-latest", _GEMINI_FLASH, "gemini-2.5-flash"],
-            "fast": ["gemini-flash-lite-latest", _GEMINI_LITE, "gemini-2.5-flash-lite", "gemini-flash-latest"],
+            "heavy": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest", _GEMINI_FLASH]),
+            "write": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest", _GEMINI_FLASH]),
+            "fast": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite",
+                                                     "gemini-flash-lite-latest", _GEMINI_LITE]),
         },
         char_budget=120_000,
     ),
     Provider(
         "groq", "Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY",
         {
-            "heavy": ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "moonshotai/kimi-k2-instruct-0905",
-                      r"re:^qwen/qwen3", "openai/gpt-oss-20b"],
-            "write": ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "llama-3.3-70b-versatile",
-                      r"re:^qwen/qwen3"],
-            "fast": ["openai/gpt-oss-20b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "llama-3.1-8b-instant"],
+            "heavy": _env_list("GROQ_MODELS", ["openai/gpt-oss-120b", "llama-3.3-70b-versatile",
+                                               "moonshotai/kimi-k2-instruct-0905", r"re:^qwen/qwen3", "openai/gpt-oss-20b"]),
+            "write": _env_list("GROQ_MODELS", ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905",
+                                               "llama-3.3-70b-versatile", r"re:^qwen/qwen3"]),
+            "fast": _env_list("GROQ_FAST_MODELS", ["openai/gpt-oss-20b", "llama-3.3-70b-versatile",
+                                                   "openai/gpt-oss-120b", "llama-3.1-8b-instant"]),
         },
         char_budget=12_000,
     ),
@@ -96,7 +104,7 @@ PROFILE_ORDER = {
     "write": ["gemini", "groq", "cerebras", "mistral", "openrouter"],
     "fast": ["groq", "gemini", "cerebras", "mistral", "openrouter"],
 }
-PROFILE_TIMEOUT = {"heavy": 120.0, "write": 75.0, "fast": 40.0}
+PROFILE_TIMEOUT = {"heavy": 150.0, "write": 90.0, "fast": 45.0}   # total per attempt while streaming
 
 _client = httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0))
 _models_cache: dict[str, tuple[float, Optional[set[str]]]] = {}
@@ -252,58 +260,102 @@ class _Skip(Exception):
     """Candidate unusable for this call; move on."""
 
 
+STALL_S = {"heavy": 45.0, "write": 40.0, "fast": 25.0}   # max silence between streamed chunks
+
+
+def _handle_error(p: Provider, model: str, code: int, text: str, json_mode: bool, effort: Optional[str],
+                  retry_after: float) -> tuple[bool, Optional[str]]:
+    """Classify an HTTP error. Returns new (json_mode, effort) to retry with, or raises _Skip."""
+    low = text.lower()
+    too_large = code == 413 or any(s in low for s in (
+        "request too large", "context length", "context_length", "too many tokens", "reduce your message"))
+    if code == 429 and not too_large:
+        if "limit: 0" in low or ("free tier" in low and "not available" in low):
+            _disabled.add(f"{p.name}:{model}")
+            raise _Skip("not available on free tier")
+        wait = retry_after
+        if "per day" in low or "perday" in low or "daily" in low:
+            wait = max(wait, 1800)
+        _cooldown[f"{p.name}:{model}"] = time.time() + wait
+        raise _Skip(f"rate limited ({wait:.0f}s)")
+    if too_large:
+        raise _Skip("request too large for this model's limits")
+    if code in (401, 403):
+        _disabled.add(f"{p.name}:*")
+        raise _Skip(f"auth failed ({code})")
+    if code == 404 or (code == 400 and ("model_not_found" in low or "does not exist" in low
+                                        or "decommissioned" in low or "not found" in low)):
+        _disabled.add(f"{p.name}:{model}")
+        raise _Skip("model unavailable")
+    if code == 400 and json_mode and ("response_format" in low or "json_validate_failed" in low
+                                      or ("json" in low and "support" in low)):
+        return False, effort
+    if code == 400 and effort and "reasoning" in low:
+        return json_mode, None
+    if code >= 500:
+        _cooldown[f"{p.name}:{model}"] = time.time() + 20
+        raise _Skip(f"provider error {code}")
+    raise _Skip(f"HTTP {code}: {text[:160]}")
+
+
 def _post(p: Provider, model: str, messages: list, max_tokens: int, temperature: float,
-          json_mode: bool, effort: Optional[str], timeout: float) -> tuple[str, dict]:
-    """One HTTP call with in-place downgrades for unsupported options."""
+          json_mode: bool, effort: Optional[str], timeout: float, stall: float = 40.0) -> tuple[str, dict]:
+    """One streamed call. A model that goes silent for `stall` seconds is abandoned (and its whole
+    provider rested for a minute), while a long answer that keeps streaming is never cut off early."""
     for _ in range(3):
         body = _payload(p, model, messages, max_tokens, temperature, json_mode, effort)
+        body["stream"] = True
+        t0 = time.time()
         try:
-            r = _client.post(f"{p.base_url}/chat/completions", headers=_headers(p), json=body, timeout=timeout)
-        except (httpx.TimeoutException, httpx.NetworkError) as e:
-            _cooldown[f"{p.name}:{model}"] = time.time() + 15
-            raise _Skip(f"network: {type(e).__name__}") from e
-        text = r.text[:1500]
-        low = text.lower()
-        if r.status_code == 200:
-            data = r.json()
-            choice = (data.get("choices") or [{}])[0]
-            content = (choice.get("message") or {}).get("content") or ""
-            if not content.strip():
-                raise _Skip(f"empty reply (finish={choice.get('finish_reason')})")
-            return content, data.get("usage") or {}
-        code = r.status_code
-        too_large = code == 413 or any(s in low for s in (
-            "request too large", "context length", "context_length", "too many tokens", "reduce your message"))
-        if code == 429 and not too_large:
-            if "limit: 0" in low or ("free tier" in low and "not available" in low):
-                _disabled.add(f"{p.name}:{model}")
-                raise _Skip("not available on free tier")
-            wait = _retry_after(r)
-            if "per day" in low or "perday" in low or "daily" in low:
-                wait = max(wait, 1800)
-            _cooldown[f"{p.name}:{model}"] = time.time() + wait
-            raise _Skip(f"rate limited ({wait:.0f}s)")
-        if too_large:
-            raise _Skip("request too large for this model's limits")
-        if code in (401, 403):
-            _disabled.add(f"{p.name}:*")
-            raise _Skip(f"auth failed ({code})")
-        if code == 404 or (code == 400 and ("model_not_found" in low or "does not exist" in low
-                                            or "decommissioned" in low or "not found" in low)):
-            _disabled.add(f"{p.name}:{model}")
-            raise _Skip("model unavailable")
-        if code == 400 and json_mode and ("response_format" in low or "json_validate_failed" in low
-                                          or ("json" in low and "support" in low)):
-            json_mode = False
-            continue
-        if code == 400 and effort and "reasoning" in low:
-            effort = None
-            continue
-        if code >= 500:
-            _cooldown[f"{p.name}:{model}"] = time.time() + 20
-            raise _Skip(f"provider error {code}")
-        raise _Skip(f"HTTP {code}: {text[:160]}")
+            with _client.stream("POST", f"{p.base_url}/chat/completions", headers=_headers(p), json=body,
+                                timeout=httpx.Timeout(connect=15.0, read=stall, write=30.0, pool=15.0)) as r:
+                if r.status_code != 200:
+                    r.read()
+                    json_mode, effort = _handle_error(p, model, r.status_code, r.text[:1500], json_mode, effort,
+                                                      _retry_after(r))
+                    continue
+                parts: list[str] = []
+                usage: dict = {}
+                finish = None
+                for line in r.iter_lines():
+                    if time.time() - t0 > timeout:
+                        raise _Skip(f"too slow (>{timeout:.0f}s)")
+                    if not line.startswith("data:"):
+                        continue  # blank lines and ": keep-alive" comments
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("error"):
+                        err = obj["error"]
+                        raise _Skip(f"stream error: {str(err.get('message', err) if isinstance(err, dict) else err)[:140]}")
+                    if obj.get("usage"):
+                        usage = obj["usage"]
+                    elif (obj.get("x_groq") or {}).get("usage"):
+                        usage = obj["x_groq"]["usage"]
+                    for ch in obj.get("choices") or []:
+                        piece = (ch.get("delta") or {}).get("content")
+                        if piece:
+                            parts.append(piece)
+                        finish = ch.get("finish_reason") or finish
+                content = "".join(parts)
+                if not content.strip():
+                    raise _Skip(f"empty reply (finish={finish})")
+                return content, usage
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
+            _cooldown[f"{p.name}:{model}"] = time.time() + 120
+            _cooldown[f"{p.name}:*"] = time.time() + 60
+            raise _Skip(f"stalled ({type(e).__name__} after {time.time() - t0:.0f}s)") from e
     raise _Skip("unsupported request options")
+
+
+def _cooling(p: Provider, model: str) -> float:
+    """Seconds until this model may be tried again (0 = available)."""
+    now = time.time()
+    return max(_cooldown.get(f"{p.name}:{model}", 0), _cooldown.get(f"{p.name}:*", 0)) - now
 
 
 def chat_json(*, task: str, profile: str, system: str, user: Optional[str] = None,
@@ -325,7 +377,7 @@ def chat_json(*, task: str, profile: str, system: str, user: Optional[str] = Non
         tried_any = False
         for p, model in cands:
             ckey = f"{p.name}:{model}"
-            if ckey in _disabled or f"{p.name}:*" in _disabled or _cooldown.get(ckey, 0) > time.time():
+            if ckey in _disabled or f"{p.name}:*" in _disabled or _cooling(p, model) > 0:
                 continue
             if time.time() > t_end:
                 break
@@ -336,7 +388,7 @@ def chat_json(*, task: str, profile: str, system: str, user: Optional[str] = Non
             STATS["calls"] += 1
             try:
                 content, usage = _post(p, model, messages, max_tokens, temperature, True, effort,
-                                       min(timeout, max(10.0, t_end - time.time())))
+                                       min(timeout, max(10.0, t_end - time.time())), STALL_S.get(profile, 40.0))
                 result = None
                 for repair in range(2):
                     try:
@@ -354,7 +406,8 @@ def chat_json(*, task: str, profile: str, system: str, user: Optional[str] = Non
                             {"role": "user", "content": f"That reply could not be used ({str(e)[:300]}). "
                                                         "Reply again with ONLY the corrected JSON object."},
                         ]
-                        content, usage = _post(p, model, messages, max_tokens, temperature, True, effort, timeout)
+                        content, usage = _post(p, model, messages, max_tokens, temperature, True, effort, timeout,
+                                               STALL_S.get(profile, 40.0))
                 ms = int((time.time() - t0) * 1000)
                 STATS["ok"] += 1
                 bp = STATS["by_provider"].setdefault(p.label, 0)
@@ -373,7 +426,7 @@ def chat_json(*, task: str, profile: str, system: str, user: Optional[str] = Non
                               "status": "failover", "detail": f"{type(e).__name__}"})
         # Everyone is cooling down: wait for the soonest one if the deadline allows.
         now = time.time()
-        waits = [_cooldown.get(f"{p.name}:{m}", 0) - now for p, m in cands
+        waits = [_cooling(p, m) for p, m in cands
                  if f"{p.name}:{m}" not in _disabled and f"{p.name}:*" not in _disabled]
         waits = [w for w in waits if w > 0]
         if not waits and tried_any:
