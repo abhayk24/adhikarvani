@@ -1,0 +1,75 @@
+name: Test, live-check and deploy to Hugging Face
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      e2e_url:
+        description: "Official document URL for the end-to-end compile check (optional)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: System packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg tesseract-ocr tesseract-ocr-hin
+      - run: pip install -q -r requirements.txt -r requirements-dev.txt
+      - run: pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ADMIN_KEY: ${{ secrets.ADMIN_KEY }}
+      HF_SPACE: ${{ vars.HF_SPACE }}
+      E2E_URL: ${{ github.event.inputs.e2e_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: System packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg tesseract-ocr tesseract-ocr-hin
+      - run: pip install -q -r requirements.txt
+      - name: Upload to the Hugging Face Space
+        run: python scripts/deploy_space.py --upload-only --report report.md
+      - name: Live check of AI providers, speech and official sources (while the Space builds)
+        run: python scripts/live_check.py --full --report report.md
+        continue-on-error: true
+      - name: Wait for the Space and check its health
+        run: python scripts/deploy_space.py --verify-only --report report.md
+      - name: Publish the report to the ci-reports branch
+        if: always()
+        run: |
+          [ -f report.md ] || echo "No report produced" > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          cp report.md /tmp/report.md
+          git config user.name "adhikarvani-ci"
+          git config user.email "adhikarvani-ci@users.noreply.github.com"
+          git checkout --orphan ci-report-tmp
+          git rm -rf -q . || true
+          cp /tmp/report.md report.md
+          git add -f report.md
+          git commit -q -m "CI report for ${GITHUB_SHA::7}"
+          git push -q -f origin HEAD:ci-reports

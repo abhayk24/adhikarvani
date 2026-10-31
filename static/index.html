@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AdhikarVani — your rights, in your voice</title>
+  <meta name="description" content="Turns government notifications, schemes and bye-laws into verified facts and eligibility checks you can hear in 11 Indian languages.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%232B2A6E'/><path d='M14 46 L32 14 L50 46' fill='none' stroke='%23CDB27A' stroke-width='7' stroke-linejoin='round'/><rect x='10' y='30' width='44' height='6' fill='%23B42318'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Mukta:wght@400;500;600;700&family=Tiro+Devanagari+Hindi:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="#/" aria-label="AdhikarVani home">
+      <span class="brand-hi" lang="hi">अधिकार-वाणी</span>
+      <span class="brand-en">AdhikarVani</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#/" data-nav="home">Compile</a>
+      <a href="#/radar" data-nav="radar">Benefit Radar</a>
+      <a href="#/how" data-nav="how">How it works</a>
+    </nav>
+    <div class="health" id="health" role="status" aria-live="polite"><span class="dot"></span><span>Connecting…</span></div>
+  </header>
+
+  <main id="main" tabindex="-1"></main>
+
+  <footer class="footer">
+    <p>AdhikarVani reads live documents from official sources and the Press Information Bureau feed. Every fact shown is matched word for word against the source. What you tell the eligibility assistant stays in your browser and is never stored.</p>
+    <p class="footer-links"><a href="/docs" target="_blank" rel="noopener">API</a><a href="/api/health" target="_blank" rel="noopener">System status</a></p>
+  </footer>
+
+  <template id="tpl-home">
+    <section class="hero">
+      <div class="hero-main">
+        <h1>Turn any government notice into rights you can hear.</h1>
+        <p class="lede">Paste a link to a scheme, gazette notification or municipal bye-law. AdhikarVani reads it, proves every fact with the exact line from the document, turns the eligibility rules into code, and explains it aloud in 11 Indian languages.</p>
+        <form class="file" id="compile-form" autocomplete="off">
+          <div class="tape" aria-hidden="true"><span class="tape-l"></span><span class="tape-knot"></span><span class="tape-r"></span></div>
+          <p class="file-label" lang="hi">फ़ाइल संख्या: नई</p>
+          <label class="field-label" for="url">Link to the document</label>
+          <input id="url" name="url" type="url" inputmode="url" placeholder="https://… .gov.in/…/guidelines.pdf" aria-describedby="url-help">
+          <p id="url-help" class="help">PDF, web page or scanned copy. Or upload a file instead.</p>
+          <div class="file-row">
+            <label class="upload">
+              <input id="file" name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.html,.htm">
+              <span id="file-name">Upload a file</span>
+            </label>
+            <label class="lang-pick"><span>Explain in</span><select id="lang" name="lang"></select></label>
+            <button class="btn btn-primary" id="compile-btn" type="submit">Compile document</button>
+          </div>
+          <p class="form-error" id="compile-error" role="alert" hidden></p>
+        </form>
+        <section class="trace" id="trace" hidden aria-live="polite" aria-label="Live agent trace"></section>
+      </div>
+      <aside class="pulse" aria-labelledby="pulse-h">
+        <div class="pulse-head">
+          <h2 id="pulse-h">Today from PIB</h2>
+          <div class="seg" role="group" aria-label="Feed language">
+            <button type="button" data-pulse="en" aria-pressed="true">English</button>
+            <button type="button" data-pulse="hi" aria-pressed="false" lang="hi">हिन्दी</button>
+          </div>
+        </div>
+        <p class="pulse-sub" id="pulse-sub">Live press releases from the Government of India.</p>
+        <ol class="pulse-list" id="pulse-list"><li class="muted">Loading the live feed…</li></ol>
+      </aside>
+    </section>
+    <section class="register" aria-labelledby="reg-h">
+      <h2 id="reg-h">Register of compiled documents</h2>
+      <div id="register"></div>
+    </section>
+  </template>
+
+  <template id="tpl-policy">
+    <div class="policy">
+      <article class="card" id="card"></article>
+      <aside class="voice" id="voice"></aside>
+    </div>
+  </template>
+
+  <template id="tpl-radar">
+    <section class="radar">
+      <div class="radar-intro">
+        <h1>Benefit Radar</h1>
+        <p class="lede">Tell the assistant about yourself once. It checks you against every compiled scheme at the same time and asks only the questions that can change an answer.</p>
+      </div>
+      <div class="radar-grid">
+        <div class="voice" id="radar-voice"></div>
+        <div id="radar-results" class="radar-results"></div>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-how">
+    <section class="how">
+      <h1>How AdhikarVani works</h1>
+      <p class="lede">The AI proposes; plain code checks. Each document goes through this graph. Loops on the right are where the agent corrects itself.</p>
+      <div class="graph" id="graph"><p class="muted">Loading the live pipeline graph…</p></div>
+      <div class="how-grid">
+        <div><h2>Every fact carries proof</h2><p>The model must copy the exact words from the document for each fact. Code then searches the document for those words. Facts whose words are not found, or that the words do not fully support, are sent back for repair once and otherwise rejected and shown as rejected.</p></div>
+        <div><h2>Eligibility is code, not a guess</h2><p>Conditions become typed rules over a shared set of facts such as age, income or state. A deterministic engine with true, false and unknown values gives the verdict and cites the clause. Unknown facts become the next question.</p></div>
+        <div><h2>Numbers are double-checked</h2><p>Before anything is spoken, every amount, age and date in the explanation is compared with the verified facts. A number that is not there forces a rewrite.</p></div>
+        <div><h2>Built to keep running</h2><p>Several free AI providers are tried in order with automatic failover, scanned and legacy-font Hindi PDFs go through OCR, and your answers never leave your browser except for the check itself.</p></div>
+      </div>
+    </section>
+  </template>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
