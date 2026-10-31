@@ -164,7 +164,17 @@ Rules:
 - kind eligibility: condition is TRUE when the person MEETS the requirement. kind exclusion: condition is TRUE when the person IS EXCLUDED.
 - Numbers in catalog units: rupees as plain numbers (2.5 lakh = 250000); land in hectares (1 acre = 0.4047 ha); age in years.
 - Enum values must be options listed in the catalog (lowercase). Booleans are true/false.
-- Prefer a boolean new variable for yes/no facts not in the catalog (e.g. "is_epfo_member"). actionable = true only if the person could change it by an action such as getting a document or registering.{feedback}"""
+- Prefer a boolean new variable for yes/no facts not in the catalog (e.g. "is_epfo_member"). actionable = true only if the person could change it by an action such as getting a document or registering.
+- Almost every condition about a person's own status IS compilable with a yes/no variable. Use not_compilable only when the condition depends on an official's discretion or on facts a citizen cannot know.
+- Declare every variable you use that is not in the catalog in new_variables (type exactly "number", "boolean" or "enum").
+
+EXAMPLES
+- "Members of EPFO, ESIC or NPS shall not be eligible" → exclusion {{"var": "is_epf_esic_nps_member", "op": "==", "value": true}}
+- "Serving or retired employees of Central/State Government, except Multi Tasking Staff / Class IV / Group D" → exclusion {{"all": [{{"var": "is_government_employee", "op": "==", "value": true}}, {{"var": "is_group_d_or_mts_employee", "op": "==", "value": false}}]}}
+- "Retired pensioners whose monthly pension is Rs. 10,000 or more" → exclusion {{"var": "monthly_pension", "op": ">=", "value": 10000}}
+- "Doctors, engineers, lawyers, chartered accountants and architects registered with professional bodies" → exclusion {{"var": "is_registered_professional", "op": "==", "value": true}}
+- "Landholding farmer families with cultivable land in their name" → eligibility {{"all": [{{"var": "land_owned_hectares", "op": ">", "value": 0}}, {{"var": "is_land_in_own_name", "op": "==", "value": true}}]}}
+- "Applicant should be a resident of Uttar Pradesh" → eligibility {{"var": "state", "op": "==", "value": "uttar pradesh"}}{feedback}"""
 
 EXPLAIN_SYSTEM = """You write short spoken explainers of Indian government documents for citizens with little formal education, in {lang}. Use ONLY the verified facts provided. Do not add facts, do not compute or convert numbers, do not give advice beyond the facts. Simple everyday words, second person, short sentences, numbers written as digits, native script of the language. Reply with JSON only."""
 
@@ -498,26 +508,72 @@ def n_compile_rules(s: dict) -> None:
     s["_detail"] = f"{n} rules proposed for {len(conds)} conditions via {meta['provider']}"
 
 
+_TYPE_ALIASES = {"bool": "boolean", "boolean": "boolean", "yes/no": "boolean", "yes_no": "boolean",
+                 "number": "number", "numeric": "number", "int": "number", "integer": "number", "float": "number",
+                 "decimal": "number", "currency": "number", "amount": "number",
+                 "enum": "enum", "category": "enum", "categorical": "enum", "select": "enum", "choice": "enum",
+                 "string": "enum", "text": "enum"}
+
+
+def _question_for(name: str) -> str:
+    """A plain question for a variable the model forgot to describe (the voice agent rephrases it)."""
+    words = name.replace("_", " ").strip()
+    for prefix, lead in (("is ", "Are you "), ("has ", "Do you have "), ("holds ", "Do you hold "),
+                         ("owns ", "Do you own "), ("receives ", "Do you receive "), ("was ", "Were you "),
+                         ("are ", "Are you "), ("does ", "Do you ")):
+        if words.startswith(prefix):
+            return lead + words[len(prefix):] + "?"
+    return f"What is your {words}?"
+
+
 def _clean_new_vars(raw: Any) -> list[VariableDef]:
     out: list[VariableDef] = []
+    if isinstance(raw, dict):  # some models return {"name": {...}} instead of a list
+        raw = [dict(v, name=k) if isinstance(v, dict) else {"name": k} for k, v in raw.items()]
     for v in raw or []:
         if not isinstance(v, dict):
             continue
-        name = str(v.get("name") or "").strip().lower()
-        if not re.fullmatch(r"[a-z][a-z0-9_]{1,40}", name) or name in CANONICAL:
-            continue
-        typ = str(v.get("type") or "").lower()
-        if typ not in ("number", "boolean", "enum"):
+        name = re.sub(r"[^a-z0-9_]", "_", str(v.get("name") or "").strip().lower()).strip("_")
+        if not re.fullmatch(r"[a-z][a-z0-9_]{1,48}", name) or name in CANONICAL:
             continue
         opts = [str(o).strip().lower() for o in (v.get("options") or []) if str(o).strip()] or None
+        typ = _TYPE_ALIASES.get(str(v.get("type") or "").strip().lower(), "")
         if typ == "enum" and not opts:
+            typ = ""
+        if not typ:
             continue
-        q = str(v.get("question") or "").strip()
-        if not q:
-            continue
+        q = str(v.get("question") or "").strip() or _question_for(name)
         out.append(VariableDef(name=name, type=typ, question=q[:200], unit=v.get("unit") or None, options=opts,
                                actionable=bool(v.get("actionable")), description=str(v.get("description") or q)[:200]))
     return out
+
+
+def _infer_vars(cond: Any, defs: dict[str, VariableDef], out: dict[str, VariableDef]) -> None:
+    """Self-heal: a variable used in a rule but never declared gets its type from that use."""
+    if not isinstance(cond, dict):
+        return
+    for key in ("all", "any"):
+        for sub in cond.get(key) or []:
+            _infer_vars(sub, defs, out)
+    if "not" in cond:
+        _infer_vars(cond["not"], defs, out)
+    name = cond.get("var")
+    if not isinstance(name, str) or name in defs or name in out:
+        return
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,48}", name):
+        return
+    val = cond.get("value")
+    vals = val if isinstance(val, list) else [val]
+    if all(isinstance(x, bool) for x in vals):
+        typ, opts = "boolean", None
+    elif all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vals):
+        typ, opts = "number", None
+    elif all(isinstance(x, str) for x in vals):
+        typ, opts = "enum", sorted({x.strip().lower() for x in vals} | {"other"})
+    else:
+        return
+    q = _question_for(name)
+    out[name] = VariableDef(name=name, type=typ, question=q, options=opts, description=q)
 
 
 def n_validate_rules(s: dict) -> None:
@@ -531,6 +587,13 @@ def n_validate_rules(s: dict) -> None:
     if raw:
         for v in _clean_new_vars(raw.get("new_variables")):
             var_acc[v.name] = v
+        inferred: dict[str, VariableDef] = {}
+        for r in raw.get("rules") or []:
+            if isinstance(r, dict):
+                _infer_vars(r.get("condition"), dict(CANONICAL) | var_acc, inferred)
+        for name, v in inferred.items():
+            var_acc[name] = v
+            s.setdefault("rule_issues", []).append(f"variable '{name}' was not declared; typed from its use")
         defs = dict(CANONICAL) | var_acc
         by_claim = {c.id: c for c in s["claims"]}
         errors = []
@@ -553,6 +616,7 @@ def n_validate_rules(s: dict) -> None:
             acc[cid] = Rule(id="", kind=kind, description=str(r.get("description") or claim.text)[:240],
                             condition=r["condition"], claim_id=cid, clause_id=claim.clause_id, quote=claim.quote)
         s["rule_errors"] = errors
+        s.setdefault("rule_issues", []).extend(errors[:10])
         s["not_compilable"] = [x for x in (raw.get("not_compilable") or []) if isinstance(x, dict)][:30]
     order = {c.id: i for i, c in enumerate(s["claims"])}
     rules = sorted(acc.values(), key=lambda r: order.get(r.claim_id, 999))
@@ -647,6 +711,7 @@ def _draft_card(s: dict) -> PolicyCard:
         is_policy_document=meta.get("is_policy_document", True) is not False,
         source=src, claims=s["claims"], rejected=s.get("rejected", []), rules=s.get("rules", []),
         variables=s.get("variables", []), not_compilable=s.get("not_compilable", []), clauses=keep_clauses,
+        rule_issues=list(dict.fromkeys(s.get("rule_issues", [])))[:20],
         warnings=list(dict.fromkeys(s.get("warnings", []))),
     )
 

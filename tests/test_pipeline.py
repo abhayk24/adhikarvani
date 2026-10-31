@@ -206,3 +206,21 @@ def test_compile_reports_unreadable_document(client):
 def test_bad_ids_are_rejected(client):
     assert client.get("/api/policies/..%2F..%2Fetc").status_code in (400, 404)
     assert client.get("/audio/../../etc/passwd").status_code in (400, 404)
+
+
+def test_rules_self_heal_undeclared_and_synonym_types():
+    from app.compiler import _clean_new_vars, _infer_vars
+    from app.variables import CANONICAL
+    vs = _clean_new_vars([{"name": "is_institutional_landholder", "type": "bool"},
+                          {"name": "pension_amount", "type": "integer", "question": "Your pension?"},
+                          {"name": "trade", "type": "string"}])  # enum without options: unusable
+    names = {v.name: v for v in vs}
+    assert names["is_institutional_landholder"].type == "boolean"
+    assert names["is_institutional_landholder"].question == "Are you institutional landholder?"
+    assert names["pension_amount"].type == "number" and "trade" not in names
+    inferred = {}
+    _infer_vars({"any": [{"var": "holds_constitutional_post", "op": "==", "value": True},
+                         {"var": "artisan_trade", "op": "in", "value": ["carpenter", "potter"]}]},
+                dict(CANONICAL), inferred)
+    assert inferred["holds_constitutional_post"].type == "boolean"
+    assert inferred["artisan_trade"].type == "enum" and "potter" in inferred["artisan_trade"].options

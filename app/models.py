@@ -116,7 +116,7 @@ class Stats(BaseModel):
     seconds: float = 0.0
 
 
-COMPILER_VERSION = 2  # bump when the compiler improves; ingestion recompiles older cards once
+COMPILER_VERSION = 3  # bump when the compiler improves; ingestion recompiles older cards once
 
 
 class PolicyCard(BaseModel):
@@ -136,6 +136,7 @@ class PolicyCard(BaseModel):
     rules: list[Rule] = Field(default_factory=list)
     variables: list[VariableDef] = Field(default_factory=list)
     not_compilable: list[dict[str, Any]] = Field(default_factory=list)
+    rule_issues: list[str] = Field(default_factory=list)
     explainers: dict[str, Explainer] = Field(default_factory=dict)
     clauses: list[Clause] = Field(default_factory=list)
     stats: Stats = Field(default_factory=Stats)

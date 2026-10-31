@@ -77,8 +77,14 @@ def main() -> int:
                 continue
             say(f"- recompiled with compiler v{COMPILER_VERSION}: was {old[0]} facts / {old[1]} rules")
         st = card.stats
+        conds = [c for c in card.claims if c.kind in ("eligibility", "exclusion")]
         say(f"- ✅ {card.title} in {time.time() - t0:.0f}s: {st.verified} verified, {st.corrected} repaired, "
-            f"{st.rejected} rejected, {len(card.rules)} rules (source OCR: {card.source.ocr_used})")
+            f"{st.rejected} rejected, {len(conds)} conditions → {len(card.rules)} rules "
+            f"(source OCR: {card.source.ocr_used}; models: {', '.join(card.models_used)})")
+        for nc in card.not_compilable[:4]:
+            say(f"  - not compilable {nc.get('claim_id')}: {str(nc.get('reason'))[:120]}")
+        for issue in card.rule_issues[:6]:
+            say(f"  - rule issue: {issue[:140]}")
         ops.append(CommitOperationAdd(f"policies/{card.id}.json", str(work / "policies" / f"{card.id}.json")))
         for ex in card.explainers.values():
             if ex.audio and (work / "audio" / ex.audio).exists():

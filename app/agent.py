@@ -56,7 +56,7 @@ REPLY_USER = """SITUATION:
 {situation}
 
 Write the reply:
-0. If "greeting" is true, begin with a one-line greeting and say what you will check.
+0. If "greeting" is true, begin with a one-line greeting and say what you will check. Otherwise do not greet again.
 1. If "user_question" is present, first answer it using ONLY "facts_for_question"; if they do not answer it, say you are not sure and suggest asking the issuing office.
 2. Then state the result naturally (eligible / not eligible and the main reason / still checking).
 3. If "next_question" is present, end by asking it in simple words.
