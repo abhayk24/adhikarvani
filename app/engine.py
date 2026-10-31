@@ -159,7 +159,7 @@ def plan_next_question(evaluations: Iterable[dict], asked: dict[str, int],
             missing = [v for v in row["missing"] if asked.get(v, 0) < 2 and v in var_defs]
             for v in missing:
                 # who qualifies is asked before who is excluded (a more natural conversation)
-                score[v] += 1.0 + (1.0 if len(missing) == 1 else 0.0) + (0.4 if row["kind"] == "eligibility" else 0.0)
+                score[v] += 1.0 + (1.0 if len(missing) == 1 else 0.0) + (1.2 if row["kind"] == "eligibility" else 0.0)
     if not score:
         return None
 
