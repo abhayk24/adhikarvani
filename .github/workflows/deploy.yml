@@ -28,7 +28,22 @@ jobs:
       - name: System packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg tesseract-ocr tesseract-ocr-hin
       - run: pip install -q -r requirements.txt -r requirements-dev.txt
-      - run: pytest -q
+      - name: Unit and pipeline tests
+        run: |
+          set -o pipefail
+          pytest -q -rf 2>&1 | tee pytest.log
+      - name: Publish test failures to the ci-reports branch
+        if: failure()
+        run: |
+          { echo "## Tests failed (commit ${GITHUB_SHA::7})"; echo; echo '```'; tail -n 150 pytest.log; echo '```'; } > /tmp/report.md
+          git config user.name "adhikarvani-ci"
+          git config user.email "adhikarvani-ci@users.noreply.github.com"
+          git checkout --orphan ci-report-tmp
+          git rm -rf -q . || true
+          cp /tmp/report.md report.md
+          git add -f report.md
+          git commit -q -m "Test report for ${GITHUB_SHA::7}"
+          git push -q -f origin HEAD:ci-reports
 
   deploy:
     needs: test
