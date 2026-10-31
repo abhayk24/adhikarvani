@@ -26,6 +26,14 @@ OFFICIAL_DOCS = [
      "https://wb.gov.in/government-schemes-details-pradhan-mantri-shram-yogi-mandhan.aspx"),
     ("Meghalaya pension scheme press note (PDF)",
      "https://www.meghalaya.gov.in/sites/default/files/press_release/Pension_Scheme_0.pdf"),
+    ("PM-KISAN guidelines (PDF, Hindi)",
+     "https://pmkisan.gov.in/Documents/%E0%A4%AA%E0%A5%8D%E0%A4%B0%E0%A4%A7%E0%A4%BE%E0%A4%A8%E0%A4%AE%E0%A4%82%E0%A4%A4%E0%A5%8D%E0%A4%B0%E0%A5%80%20%E0%A4%95%E0%A4%BF%E0%A4%B8%E0%A4%BE%E0%A4%A8%20%E0%A4%B8%E0%A4%AE%E0%A5%8D%E0%A4%AE%E0%A4%BE%E0%A4%A8%20%E0%A4%A8%E0%A4%BF%E0%A4%A7%E0%A4%BF.pdf"),
+    ("PM Vishwakarma explainer (Andhra Pradesh MSME, PDF)",
+     "https://apmsmeone.ap.gov.in/Downloads/PMVishwakarmaProjectExplainer.pdf"),
+    ("PM Vishwakarma (UP MSME portal, PDF)",
+     "https://msme1connect.up.gov.in/GovernmentScheme/GovernmentScheme638769634969101318.pdf"),
+    ("Atal Pension Yojana brochure (PFRDA, PDF)",
+     "https://www.pfrda.org.in/documents/33652/307349/APY%20Subscriber%20Information%20Brochure%20English"),
 ]
 
 
@@ -91,7 +99,8 @@ def main() -> int:
         say(f"- TTS/ASR: ❌ {type(e).__name__}: {e}")
     for lang in ("ta", "bn", "pa"):
         try:
-            prov = voice.synthesize("नमस्ते" if lang == "pa" else "Hello", lang, sample)
+            text = {"ta": "வணக்கம்", "bn": "নমস্কার", "pa": "ਸਤ ਸ੍ਰੀ ਅਕਾਲ"}[lang]
+            prov = voice.synthesize(text, lang, sample)
             say(f"- TTS {lang}: ✅ {prov}")
         except Exception as e:
             say(f"- TTS {lang}: ❌ {e}")

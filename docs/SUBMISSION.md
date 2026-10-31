@@ -22,7 +22,7 @@ Citizens then talk to the assistant in their language. Whisper transcribes, an L
 USP: unlike RAG chatbots, AdhikarVani compiles law into verifiable facts and executable rules. Every fact carries its proof, every verdict is deterministic and citable, and hallucinations are caught, repaired or rejected visibly.
 
 **Technical Architecture**
-* **Core stack:** Python 3.11 and FastAPI; Server-Sent Events stream the agent's live trace; vanilla JS front end with MediaRecorder voice capture; Docker Space on Hugging Face, deployed by GitHub Actions.
+* **Core stack:** Python 3.11 and FastAPI; Server-Sent Events stream the agent's live trace; vanilla JS front end with MediaRecorder voice capture; Docker container on Render's free tier with a Hugging Face Space as the public front door, deployed from GitHub with automated live checks.
 * **Agent workflow:** a custom state graph of 13 nodes with conditional loops (quote verification → self-correction → re-verification; rule compilation → type-check → repair). Every node, tool call, model call, failover and guardrail decision is streamed to the UI.
 * **Models (free tiers):** Google Gemini Flash for long-document extraction and multilingual writing; Groq gpt-oss / Llama for fast entailment and fact extraction; Whisper large-v3 on Groq for speech recognition; Microsoft Edge neural voices (edge-tts) with gTTS fallback for speech. A provider-agnostic router discovers available models at startup and fails over across Gemini, Groq, Cerebras, Mistral and OpenRouter on rate limits or outages, and repairs invalid JSON by showing the model its own error.
 * **Custom RAG and verification:** PDFium text extraction, Tesseract OCR with script detection and 11 Indic language packs, legacy-font (Kruti Dev) detection, clause segmentation with page and section, Unicode-aware BM25 over eight citizen intents in English and Hindi with reciprocal rank fusion and provider-sized context packing, RapidFuzz quote verification (exact / fuzzy / relocated), LLM entailment checks, numeric-fidelity checks with Indic digits and lakh/crore normalisation.
@@ -31,7 +31,7 @@ USP: unlike RAG chatbots, AdhikarVani compiles law into verifiable facts and exe
 * **Safety:** SSRF-safe fetching, size limits, prompt-injection flagging, HTML escaping, stateless citizen sessions.
 
 ## 3. Prototype Link
-https://abhayk24-adhikarvani.hf.space  (Space page: https://huggingface.co/spaces/Abhayk24/adhikarvani)
+https://huggingface.co/spaces/Abhayk24/adhikarvani  (live app: https://adhikarvani.onrender.com)
 
 ## 4. Demo Video
 (add your Loom/YouTube/Drive link)

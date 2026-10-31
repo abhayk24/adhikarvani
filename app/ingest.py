@@ -252,7 +252,7 @@ def parse_pdf(data: bytes, trace: Trace = None) -> ParsedDoc:
         lang = None
         for i in weak[: config.MAX_OCR_PAGES]:
             try:
-                img = pdf[i].render(scale=2.6).to_pil()
+                img = pdf[i].render(scale=config.OCR_SCALE).to_pil()
                 txt, lang = ocr_image(img, trace, lang)
                 pages[i] = clean_text(txt)
                 ocr_pages += 1

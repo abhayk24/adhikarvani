@@ -67,6 +67,11 @@ def index():
     return FileResponse(config.STATIC_DIR / "index.html")
 
 
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
 @app.get("/api/health")
 def health():
     return {

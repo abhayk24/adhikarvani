@@ -20,7 +20,8 @@ AUDIO_DIR = DATA_DIR / "audio"
 # ---- Safety and quota limits (free-tier friendly) --------------------------
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024      # biggest document we will fetch/accept
 MAX_PDF_PAGES = 80                          # pages read from one PDF
-MAX_OCR_PAGES = 12                          # scanned pages we OCR (CPU time)
+MAX_OCR_PAGES = int(os.getenv("MAX_OCR_PAGES", "12"))   # scanned pages we OCR (CPU time)
+OCR_SCALE = float(os.getenv("OCR_SCALE", "2.6"))           # render scale for OCR (lower = faster)
 MAX_CLAUSES = 3000
 MAX_AUDIO_BYTES = 12 * 1024 * 1024
 MAX_CONCURRENT_COMPILES = 2
@@ -40,7 +41,7 @@ USER_AGENT = (
 )
 
 # Domains we treat as official government sources (shown as a trust badge).
-OFFICIAL_SUFFIXES = ("gov.in", "nic.in", "rbi.org.in", "sebi.gov.in", "india.gov.in")
+OFFICIAL_SUFFIXES = ("gov.in", "nic.in", "rbi.org.in", "pfrda.org.in", "india.gov.in", "gov")
 
 
 def is_official_domain(domain: str | None) -> bool:

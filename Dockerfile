@@ -1,4 +1,4 @@
-# AdhikarVani on Hugging Face Spaces (Docker SDK, CPU basic is enough)
+# AdhikarVani: runs on Render (free web service) or a Hugging Face Docker Space
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -22,6 +22,7 @@ RUN pip install --user -r requirements.txt
 
 COPY --chown=user . .
 
+ENV PORT=7860
 EXPOSE 7860
-# One worker on purpose: live compile jobs are tracked in memory.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# One worker on purpose: live compile jobs are tracked in memory. $PORT is set by Render (HF uses 7860).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-7860} --proxy-headers --forwarded-allow-ips '*'"]

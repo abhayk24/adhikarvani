@@ -174,11 +174,16 @@ def configured_providers() -> list[str]:
 
 
 def active_models() -> dict[str, Any]:
-    """What the router would use right now, for the health endpoint."""
+    """What the router would use right now (cached discovery only, never blocks on the network)."""
     out: dict[str, Any] = {}
     for profile in ("heavy", "write", "fast"):
-        c = candidates(profile)
-        out[profile] = [f"{p.label} · {m}" for p, m in c[:3]]
+        rows = []
+        for name in PROFILE_ORDER[profile]:
+            p = PROVIDER_BY_NAME[name]
+            if not p.key() or f"{p.name}:*" in _disabled or p.name not in _models_cache:
+                continue
+            rows += [f"{p.label} · {m}" for m in resolve_models(p, profile)]
+        out[profile] = rows[:3]
     return out
 
 

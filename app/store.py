@@ -36,21 +36,28 @@ class Store:
 
     # ----------------------------------------------------------- lifecycle --
     def start(self) -> None:
-        if config.HF_TOKEN and config.HF_DATASET_REPO:
+        repo = config.HF_DATASET_REPO
+        if config.HF_TOKEN and not repo:
+            try:  # not on a Space (e.g. Render): name the dataset after the token owner
+                from huggingface_hub import whoami
+                repo = f"{whoami(token=config.HF_TOKEN)['name']}/adhikarvani-store"
+            except Exception as e:
+                log.warning("could not resolve dataset owner: %s", e)
+        if config.HF_TOKEN and repo:
             try:
                 from huggingface_hub import CommitScheduler, create_repo, snapshot_download
-                create_repo(config.HF_DATASET_REPO, repo_type="dataset", private=not config.STORE_PUBLIC,
+                create_repo(repo, repo_type="dataset", private=not config.STORE_PUBLIC,
                             exist_ok=True, token=config.HF_TOKEN)
                 try:
-                    snapshot_download(config.HF_DATASET_REPO, repo_type="dataset", local_dir=str(self.data_dir),
+                    snapshot_download(repo, repo_type="dataset", local_dir=str(self.data_dir),
                                       token=config.HF_TOKEN, allow_patterns=["policies/*.json", "audio/*.mp3"])
                 except Exception as e:  # empty repo on first run
                     log.info("dataset restore skipped: %s", e)
-                self.scheduler = CommitScheduler(repo_id=config.HF_DATASET_REPO, repo_type="dataset",
+                self.scheduler = CommitScheduler(repo_id=repo, repo_type="dataset",
                                                  folder_path=self.data_dir, every=2, token=config.HF_TOKEN,
                                                  allow_patterns=["policies/*.json", "audio/*.mp3"],
                                                  private=not config.STORE_PUBLIC)
-                self.sync_status = f"synced to dataset {config.HF_DATASET_REPO}"
+                self.sync_status = f"synced to dataset {repo}"
             except Exception as e:
                 self.sync_status = f"local only (dataset sync failed: {type(e).__name__})"
                 log.warning("dataset sync disabled: %s", e)

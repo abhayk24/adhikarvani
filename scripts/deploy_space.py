@@ -1,5 +1,11 @@
-"""Deploy this repository to a Hugging Face Docker Space (run by GitHub Actions).
+"""Publish AdhikarVani on Hugging Face (run by GitHub Actions).
 
+Two modes (repository variable HF_SPACE_MODE):
+* static (default, free): a static Space that is the public front door to the live app
+  hosted on Render (APP_URL / deploy/app_url.txt), embedding it full-page.
+* docker (needs Hugging Face PRO since July 2026): the whole app runs in a Docker Space.
+
+Docker mode:
 * Creates the Space on first run (public, Docker SDK) under the token owner's account.
 * Copies the API keys from GitHub secrets into Space secrets, so they live in one place.
 * Uploads the code with a Space README (YAML front matter) generated from README.md.
@@ -56,6 +62,51 @@ def log_tail(token: str, space: str, kind: str, seconds: float = 12.0, lines: in
     except Exception as e:
         out.append(f"(could not read {kind} logs: {type(e).__name__})")
     return out[-lines:]
+
+
+FRONT_DOOR = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AdhikarVani: your rights, in your voice</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #EDF1EA; font-family: system-ui, sans-serif; }
+  .bar { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 6px 14px;
+         background: #2B2A6E; color: #F3EEDF; font-size: 14px; }
+  .bar a { color: #E2CF9F; font-weight: 600; }
+  iframe { border: 0; width: 100%; height: calc(100% - 34px); display: block; }
+</style>
+</head>
+<body>
+<div class="bar"><span>AdhikarVani (अधिकार-वाणी). If the app is waking up, the first load can take about a minute.</span>
+<a href="__APP__" target="_blank" rel="noopener">Open full screen</a></div>
+<iframe src="__APP__" title="AdhikarVani app" allow="microphone; autoplay; clipboard-write"></iframe>
+</body>
+</html>
+"""
+STATIC_FRONT_MATTER = FRONT_MATTER.replace("sdk: docker\napp_port: 7860\n", "sdk: static\n")
+
+
+def app_url() -> str:
+    url = os.getenv("APP_URL", "").strip()
+    if not url:
+        f = ROOT / "deploy" / "app_url.txt"
+        url = f.read_text().strip() if f.exists() else ""
+    return url.rstrip("/")
+
+
+def front_door(api: HfApi, space: str, sha: str, url: str, say) -> None:
+    api.create_repo(space, repo_type="space", space_sdk="static", exist_ok=True, private=False)
+    with tempfile.TemporaryDirectory() as tmp:
+        stage = Path(tmp)
+        (stage / "index.html").write_text(FRONT_DOOR.replace("__APP__", url), encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8") if (ROOT / "README.md").exists() else "# AdhikarVani\n"
+        (stage / "README.md").write_text(STATIC_FRONT_MATTER + f"**Live app:** {url}\n\n" + readme, encoding="utf-8")
+        info = api.upload_folder(repo_id=space, repo_type="space", folder_path=str(stage),
+                                 commit_message=f"Front door for {sha}")
+    say(f"- Static front-door Space updated: {getattr(info, 'commit_url', info)}")
+    say(f"- It embeds the live app at {url}")
 
 
 def upload(api: HfApi, space: str, token: str, sha: str, say) -> None:
@@ -124,6 +175,27 @@ def verify(api: HfApi, space: str, token: str, host: str, wait: int, say) -> boo
     return False
 
 
+def check_app(url: str, say, tries: int = 6) -> bool:
+    """Report the live app's health (the host deploys on its own; a cold start can take a minute)."""
+    if not url:
+        say("- No APP_URL configured")
+        return False
+    for _ in range(tries):
+        try:
+            r = httpx.get(f"{url}/api/health", timeout=90)
+            if r.status_code == 200:
+                h = r.json()
+                say(f"- {url} is up: version {h.get('version')}, providers {h['llm']['configured']}, store {h['store']}")
+                for prof, models in h["llm"]["active"].items():
+                    say(f"  - {prof}: {', '.join(models) or '(discovering)'}")
+                return True
+            say(f"- {url} answered HTTP {r.status_code}")
+        except Exception as e:
+            say(f"- {url} not reachable yet ({type(e).__name__})")
+        time.sleep(20)
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", default="report.md")
@@ -150,6 +222,21 @@ def main() -> int:
     host = f"https://{space.replace('/', '-').replace('_', '-').replace('.', '-').lower()}.hf.space"
     sha = os.getenv("GITHUB_SHA", "local")[:7]
     ok = True
+    mode = os.getenv("HF_SPACE_MODE", "static").strip().lower() or "static"
+    url = app_url()
+    if mode != "docker":
+        say(f"## Hugging Face front door https://huggingface.co/spaces/{space} (commit {sha})\n")
+        if not args.verify_only:
+            try:
+                front_door(api, space, sha, url, say)
+            except Exception as e:
+                say(f"- ❌ Front door update failed: {type(e).__name__}: {str(e)[:400]}")
+        ok = True
+        if not args.upload_only:
+            say("\n## Live app\n")
+            ok = check_app(url, say)
+        report.close()
+        return 0
     if not args.verify_only:
         say(f"## Deploy to https://huggingface.co/spaces/{space} (commit {sha})\n")
         try:

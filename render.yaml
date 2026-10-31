@@ -1,0 +1,22 @@
+# Render Blueprint: one free Docker web service built from this repository.
+# Render asks for the three secret values when you create the Blueprint.
+services:
+  - type: web
+    name: adhikarvani
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: MAX_OCR_PAGES
+        value: "5"
+      - key: OCR_SCALE
+        value: "2.2"

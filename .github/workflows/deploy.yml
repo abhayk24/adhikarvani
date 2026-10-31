@@ -1,4 +1,4 @@
-name: Test, live-check and deploy to Hugging Face
+name: Test, live-check and publish
 
 on:
   push:
@@ -57,6 +57,8 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ADMIN_KEY: ${{ secrets.ADMIN_KEY }}
       HF_SPACE: ${{ vars.HF_SPACE }}
+      HF_SPACE_MODE: ${{ vars.HF_SPACE_MODE }}
+      APP_URL: ${{ vars.APP_URL }}
       E2E_URL: ${{ github.event.inputs.e2e_url }}
     steps:
       - uses: actions/checkout@v4
@@ -67,12 +69,12 @@ jobs:
       - name: System packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg tesseract-ocr tesseract-ocr-hin
       - run: pip install -q -r requirements.txt
-      - name: Upload to the Hugging Face Space
+      - name: Update the Hugging Face Space
         run: python scripts/deploy_space.py --upload-only --report report.md
-      - name: Live check of AI providers, speech and official sources (while the Space builds)
+      - name: Live check of AI providers, speech and official sources
         run: python scripts/live_check.py --full --report report.md
         continue-on-error: true
-      - name: Wait for the Space and check its health
+      - name: Check the live app
         run: python scripts/deploy_space.py --verify-only --report report.md
       - name: Publish the report to the ci-reports branch
         if: always()

@@ -80,7 +80,7 @@ A document is fetched (private-network addresses blocked, redirects re-checked, 
 | Retrieval and verification | Custom BM25 with Unicode-aware tokenisation, reciprocal rank fusion, RapidFuzz |
 | Persistence | JSON documents mirrored to a Hugging Face dataset with `CommitScheduler` |
 | Front end | Vanilla HTML/CSS/JS, MediaRecorder for voice, no build step |
-| Deploy | Docker Space on Hugging Face, deployed by GitHub Actions with a live end-to-end check |
+| Deploy | Docker on Render (free) with a Hugging Face front-door Space, GitHub Actions with a live end-to-end check |
 
 ## Run it locally
 
@@ -106,19 +106,33 @@ Or with Docker: `docker build -t adhikarvani . && docker run -p 7860:7860 -e GEM
 | `GROQ_API_KEY` | one of these two | Whisper speech recognition, fast checks, LLM fallback |
 | `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` | no | Extra failover capacity |
 | `HF_TOKEN` | no | Persist compiled cards to a Hugging Face dataset |
-| `HF_DATASET_REPO` | no | Dataset name (default `<space owner>/adhikarvani-store`) |
+| `HF_DATASET_REPO` | no | Dataset name (default `<token owner>/adhikarvani-store`) |
+| `MAX_OCR_PAGES`, `OCR_SCALE` | no | OCR limits for small CPUs (Render sets 5 and 2.2) |
 | `ADMIN_KEY` | no | Enables `DELETE /api/policies/{id}` |
 
-## Deployment (GitHub to Hugging Face)
+## Deployment
 
-Every push to `main` runs `.github/workflows/deploy.yml`:
+| Piece | Where | Cost |
+|---|---|---|
+| Live app (this Docker image) | Render web service, auto-deployed from `main` via `render.yaml` | Free, no card |
+| Public front door | Hugging Face static Space `Abhayk24/adhikarvani`, embedding the live app | Free |
+| Compiled Rights Cards | Hugging Face dataset `Abhayk24/adhikarvani-store` | Free |
+| CI, live checks, keep-awake ping | GitHub Actions | Free for public repos |
+
+Hugging Face moved Docker and Gradio Spaces on `cpu-basic` to PRO in July 2026, so the Python backend runs on Render's free tier instead. With a PRO account, set the repository variable `HF_SPACE_MODE=docker` and the same workflow deploys the full app to a Docker Space.
+
+**Render setup (once):** sign in at render.com with GitHub → New → Blueprint → pick this repo → paste `GEMINI_API_KEY`, `GROQ_API_KEY` and `HF_TOKEN` when asked → Apply. Every push to `main` then redeploys automatically. If Render gives the service a different address than `https://adhikarvani.onrender.com`, put it in `deploy/app_url.txt` (or the repository variable `APP_URL`).
+
+Every push to `main` also runs `.github/workflows/deploy.yml`:
 1. unit and pipeline tests;
-2. uploads the code to the Docker Space `<hf-user>/adhikarvani` and copies the API keys from GitHub secrets into Space secrets;
-3. while the Space builds, runs `scripts/live_check.py`: pings every AI provider, does a Hindi TTS→ASR round trip, fetches the PIB feed and official PDFs, and compiles a real scheme document end to end;
-4. waits for the Space and checks `/api/health`;
+2. updates the Hugging Face front-door Space;
+3. runs `scripts/live_check.py`: pings every AI provider, does a Hindi TTS→ASR round trip, fetches the PIB feed and official PDFs, and compiles a real scheme document end to end;
+4. checks the live app's `/api/health`;
 5. writes the report to the job summary and the `ci-reports` branch.
 
-Repository secrets needed: `HF_TOKEN` (write), `GEMINI_API_KEY`, `GROQ_API_KEY`.
+`.github/workflows/keepalive.yml` pings the app every 10 minutes so Render's free instance does not fall asleep during judging.
+
+Repository secrets: `HF_TOKEN` (write), `GEMINI_API_KEY`, `GROQ_API_KEY`.
 
 ## API
 
