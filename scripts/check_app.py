@@ -19,10 +19,8 @@ import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = [
-    ("PM-KISAN guidelines (English)",
-     "https://pmkisan.gov.in/Documents/RevisedPM-KISANOperationalGuidelines(English).pdf"),
-    ("PM-KISAN (Hindi)",
-     "https://pmkisan.gov.in/Documents/%E0%A4%AA%E0%A5%8D%E0%A4%B0%E0%A4%A7%E0%A4%BE%E0%A4%A8%E0%A4%AE%E0%A4%82%E0%A4%A4%E0%A5%8D%E0%A4%B0%E0%A5%80%20%E0%A4%95%E0%A4%BF%E0%A4%B8%E0%A4%BE%E0%A4%A8%20%E0%A4%B8%E0%A4%AE%E0%A5%8D%E0%A4%AE%E0%A4%BE%E0%A4%A8%20%E0%A4%A8%E0%A4%BF%E0%A4%A7%E0%A4%BF.pdf"),
+    # Reachable from the app's cloud region; other official documents are compiled by
+    # scripts/ingest.py from CI and reach the app through the dataset.
     ("Atal Pension Yojana brochure (PFRDA, scanned)",
      "https://www.pfrda.org.in/documents/33652/307349/APY%20Subscriber%20Information%20Brochure%20English"),
 ]
@@ -100,6 +98,14 @@ def main() -> int:
         except Exception as e:
             say(f"- ❌ {name}: {type(e).__name__}: {str(e)[:200]}")
 
+    try:  # prefer the scheme with the most rules for the agent walkthrough
+        rows = c.get("/api/policies").json()["policies"]
+        say(f"- Register on the live app: {len(rows)} card(s): " + "; ".join(f"{r['title'][:40]} ({r['rules']} rules)" for r in rows))
+        ruled = sorted([r for r in rows if r["rules"]], key=lambda r: -r["rules"])
+        if ruled:
+            first_id = ruled[0]["id"]
+    except Exception:
+        pass
     if first_id:
         try:
             state = "{}"

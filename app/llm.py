@@ -42,6 +42,7 @@ class Provider:
     prefs: dict[str, list[str]]
     char_budget: int  # document characters a heavy prompt may carry for this provider
     extra_headers: dict[str, str] = field(default_factory=dict)
+    max_output: int = 16000  # output cap so prompt + output fits the free tier's tokens-per-minute
 
     def key(self) -> str:
         return os.getenv(self.key_env, "").strip()
@@ -78,7 +79,8 @@ PROVIDERS: list[Provider] = [
             "fast": _env_list("GROQ_FAST_MODELS", ["openai/gpt-oss-20b", "llama-3.3-70b-versatile",
                                                    "openai/gpt-oss-120b", "llama-3.1-8b-instant"]),
         },
-        char_budget=12_000,
+        char_budget=9_000,
+        max_output=4200,
     ),
     Provider(
         "cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
@@ -240,6 +242,7 @@ def _is_gemini3(p: Provider, model: str) -> bool:
 
 def _payload(p: Provider, model: str, messages: list, max_tokens: int, temperature: float,
              json_mode: bool, effort: Optional[str]) -> dict:
+    max_tokens = min(max_tokens, p.max_output)
     body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": max_tokens}
     if not _is_gemini3(p, model):  # Gemini 3 is tuned for its default temperature
         body["temperature"] = temperature

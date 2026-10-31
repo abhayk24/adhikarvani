@@ -146,7 +146,9 @@ def evaluate(policy: PolicyCard, profile: dict[str, Any]) -> dict[str, Any]:
 
 def plan_next_question(evaluations: Iterable[dict], asked: dict[str, int],
                        var_defs: dict[str, VariableDef]) -> Optional[str]:
-    """Pick the unknown fact that can settle the most undecided rules."""
+    """Pick the unknown fact that can settle the most undecided rules.
+
+    Ties go to the most natural question first (state, age, work, income...)."""
     score: Counter = Counter()
     for ev in evaluations:
         if ev["status"] != "needs_info":
@@ -156,7 +158,7 @@ def plan_next_question(evaluations: Iterable[dict], asked: dict[str, int],
                 continue
             missing = [v for v in row["missing"] if asked.get(v, 0) < 2 and v in var_defs]
             for v in missing:
-                score[v] += 1.0 + (1.0 if len(missing) == 1 else 0.0) + (0.5 if row["kind"] == "exclusion" else 0)
+                score[v] += 1.0 + (1.0 if len(missing) == 1 else 0.0)
     if not score:
         return None
 

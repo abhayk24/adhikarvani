@@ -169,3 +169,13 @@ def test_hindi_visual_order_pdf_text_still_verifies():
     wrong = Claim(id="K2", kind="benefit", text="x", clause_id=cl[0].id,
                   quote="सभी नागरिकों को मुफ्त बिजली और पानी मिलेगा")
     assert not verify_quote(wrong, idx).quote_found
+
+
+def test_broken_hindi_text_layer_is_detected():
+    from app.ingest import looks_garbled_devanagari
+    broken = ("प्रधानमंत्री किसान सम्मान ननधध उद्देश्य देश भेंछोटेऔय सीभ ॊत किस नों िो प्रतमऺत ् आम सॊफॊधी "
+              "सह मत ददए ज नेिे प्रमोजन र्थएि सव ु म् वसथर्त ् ि मथवम् वसर् ् ि मभ ियनेिे लरए ब यत सयि य द्व य") * 2
+    clean = ("प्रधानमंत्री किसान सम्मान निधि योजना का उद्देश्य देश के छोटे और सीमांत किसानों को आय संबंधी "
+             "सहायता देना है ताकि वे खेती से जुड़ी जरूरतें पूरी कर सकें और अपनी आजीविका सुरक्षित कर सकें।") * 2
+    assert looks_garbled_devanagari(broken)
+    assert not looks_garbled_devanagari(clean)

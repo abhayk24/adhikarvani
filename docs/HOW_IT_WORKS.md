@@ -70,7 +70,8 @@ The prompt forces: only the given clauses, one atomic condition per eligibility 
 
 ### 4.5 Verification (`verify.py`, `n_verify`)
 1. **Quote match:** both sides are normalised (Unicode NFKC, Indic digits to ASCII, lowercase, punctuation removed). Exact substring = *exact*. Otherwise RapidFuzz `partial_ratio` ≥ 90 against the clause and its neighbours = *fuzzy* (OCR noise). Otherwise search all clauses (score ≥ 92) = *relocated*, and the clause id is corrected. Quotes under 3 words are refused because they prove nothing.
-2. **Entailment:** for quotes that exist, a second, fast model judges whether the quote fully supports the claim (with the section heading for context).
+   **Hindi PDFs:** many store vowel signs in visual order, so the extracted text reads `िकसान` where the model writes `किसान`. For Indic quotes we also compare *consonant skeletons* (vowel signs, viramas and spaces removed) = *normalised*. A test proves a badly garbled extraction verifies while an invented Hindi claim is still rejected.
+2. **Entailment:** for quotes that exist, a second, fast model judges whether the quote fully supports the claim. It also sees the section heading and the previous clause, because list items ("(a) All institutional land holders") only make sense with their lead-in ("the following shall not be eligible").
 3. **Self-correction (`n_self_correct`):** claims that failed are sent back once with the reason and the relevant clauses; the model repairs or drops each one, and repaired claims go through step 1 and 2 again.
 4. **Firewall (`n_finalize_claims`):** whatever still fails is removed from the card and listed under *Rejected by the verifier*.
 
@@ -110,12 +111,24 @@ Numbers are extracted from the explainer, with Indic digits converted, `2.5 ल�
 
 ### 4.11 LLM router (`llm.py`)
 * All providers speak the OpenAI chat format, so one HTTP client covers them.
-* At startup it lists the models each key can use (`GET /models`) and picks per *profile*: **heavy** (long documents: Gemini Flash first), **fast** (short checks: Groq first), **write** (multilingual: Gemini first).
+* Every call is **streamed**. If a model sends nothing for 25 to 45 seconds it is abandoned and its whole provider is rested for a minute, so failover is quick; a long answer that keeps streaming is never cut off. (We measured this matters: on the free tier the newest Gemini models sometimes accept a request and then go silent.)
+* At startup it lists the models each key can use (`GET /models`) and picks per *profile*: **heavy** (long documents: Gemini 3.5 Flash, then 2.5 Flash), **fast** (short checks: Groq gpt-oss-20b first), **write** (multilingual: Gemini first). The order can be changed without code through `GEMINI_MODELS`, `GROQ_MODELS` etc.
 * On 429 it reads `Retry-After` (or Groq's "try again in 7.5s") and cools that model down; daily-quota errors cool for 30 minutes; "request too large" skips to a model with a bigger budget; 404/decommissioned models and bad keys are disabled; 5xx and timeouts fail over.
 * If every model is cooling down for under 30 s it waits; otherwise it reports a clear error.
 * Invalid JSON is repaired by sending the model its own reply plus the parse error.
 
-## 5. Robustness and edge cases
+## 5. Hosting
+
+| Piece | Where | Why |
+|---|---|---|
+| The app (Docker) | Render free web service, Singapore, auto-deploys from GitHub `main` | Hugging Face made Docker/Gradio Spaces PRO-only in July 2026 |
+| Public link | Hugging Face static Space (free) that embeds the app | Keeps a Hugging Face URL for the submission |
+| Compiled cards | Hugging Face dataset `Abhayk24/adhikarvani-store` | Survives restarts; Render's disk is temporary |
+| Keep-awake | GitHub Actions ping every 10 minutes | Render's free tier sleeps after 15 idle minutes |
+
+Every push runs the tests, a live check of each AI provider and speech service, a full compile of the real PM-KISAN guidelines, and a walkthrough of the deployed app through its public API. The report lands on the `ci-reports` branch.
+
+## 6. Robustness and edge cases
 
 | Situation | What happens |
 |---|---|
@@ -130,17 +143,17 @@ Numbers are extracted from the explainer, with Indic digits converted, `2.5 ल�
 | Live trace connection drops | Browser switches to polling and resumes from the last event |
 | Invented quote, wrong clause, mistyped rule, made-up number | Rejected, relocated, retried, regenerated (all covered by `tests/test_pipeline.py`) |
 
-## 6. Security and privacy
+## 7. Security and privacy
 * SSRF guard on every fetch and redirect; 25 MB cap; strict regexes on ids and audio file names (no path traversal).
 * All text from documents and the AI is HTML-escaped in the browser.
 * API keys live only in GitHub and Space secrets.
 * No citizen data is stored; the Space only keeps compiled public documents.
 
-## 7. Rule compliance
+## 8. Rule compliance
 * **No dummy data:** the app ships with no data. Everything comes from live sources at run time: the PIB RSS feed, official document URLs or uploads, and live AI APIs. Compiled cards persist in a Hugging Face dataset created by the app itself. The only fixture is inside `tests/`, which never runs in the app.
 * **Built during the hackathon:** see the commit history. Open-source libraries are used as libraries; the compiler, verifier, engine, router, agent and UI are this project's own code.
 
-## 8. Questions judges are likely to ask
+## 9. Questions judges are likely to ask
 
 **Q: How is this different from a RAG chatbot?**
 A RAG chatbot answers each question with a fresh guess. We compile once into verified facts and typed rules, then the verdict comes from deterministic code. Every fact shows its quote, page and clause, and unproven ones are rejected visibly.
@@ -181,10 +194,16 @@ No. The profile stays in the browser; each turn is stateless on the server.
 **Q: How do you measure accuracy?**
 Every card reports facts verified, repaired and rejected, and every rule links to a verified quote. The test suite checks each guardrail; CI compiles a real PM-KISAN document on every push.
 
+**Q: Where does it run, and is it free?**
+The container runs on Render's free tier; the Hugging Face Space is the public front door and a Hugging Face dataset stores compiled cards. All AI providers are on free tiers. Total cost: zero.
+
+**Q: What happens if Gemini is slow or down during the demo?**
+The router streams, notices silence within about 30 seconds, rests Gemini and moves to Groq; the live trace shows the switch. Documents already compiled load instantly from the store with no AI calls.
+
 **Q: What would you build next?**
 WhatsApp/IVR voice channel for feature phones, notification change tracking (diff two versions of a rule and tell who gains or loses eligibility), state gazette crawlers, Sarvam/AI4Bharat models for more Indic languages, and an officer console to approve cards.
 
-## 9. Demo video shot list (2 to 3 minutes)
+## 10. Demo video shot list (2 to 3 minutes)
 1. **0:00** Home: say the problem in one line; point at the live PIB feed.
 2. **0:15** Paste an official scheme PDF link (or click *Explain this release*) and press **Compile document**; the red tape cuts.
 3. **0:25** Narrate the live trace: OCR/clauses, which model was used, quotes verified, self-correction, rules type-checked, numeric check passed.

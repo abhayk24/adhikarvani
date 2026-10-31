@@ -33,6 +33,7 @@ class Store:
         self._lock = threading.RLock()
         self.scheduler = None
         self.sync_status = "local only"
+        self.repo = ""
 
     # ----------------------------------------------------------- lifecycle --
     def start(self) -> None:
@@ -58,10 +59,37 @@ class Store:
                                                  allow_patterns=["policies/*.json", "audio/*.mp3"],
                                                  private=not config.STORE_PUBLIC)
                 self.sync_status = f"synced to dataset {repo}"
+                self.repo = repo
+                threading.Thread(target=self._refresh_loop, daemon=True).start()
             except Exception as e:
                 self.sync_status = f"local only (dataset sync failed: {type(e).__name__})"
                 log.warning("dataset sync disabled: %s", e)
         self.reload()
+
+    def _refresh_loop(self, every_s: int = 300) -> None:
+        import time
+        while True:
+            time.sleep(every_s)
+            try:
+                self.pull_new()
+            except Exception as e:  # never let a sync hiccup hurt the app
+                log.warning("dataset refresh failed: %s", e)
+
+    def pull_new(self) -> int:
+        """Download cards (and their audio) that other writers, such as the CI ingestion job,
+        added to the dataset. Files that already exist locally are never overwritten."""
+        if not self.repo:
+            return 0
+        from huggingface_hub import HfApi, hf_hub_download
+        names = HfApi(token=config.HF_TOKEN).list_repo_files(self.repo, repo_type="dataset")
+        new = [n for n in names if (n.startswith("policies/") and n.endswith(".json")
+                                    or n.startswith("audio/") and n.endswith(".mp3"))
+               and not (self.data_dir / n).exists()]
+        for n in new:
+            hf_hub_download(self.repo, n, repo_type="dataset", local_dir=str(self.data_dir), token=config.HF_TOKEN)
+        if any(n.startswith("policies/") for n in new):
+            self.reload()
+        return len(new)
 
     def reload(self) -> None:
         with self._lock:

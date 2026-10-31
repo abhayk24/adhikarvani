@@ -124,7 +124,7 @@ def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
         try:
             with httpx.Client(
                 follow_redirects=True, verify=verify,
-                timeout=httpx.Timeout(35.0, connect=15.0),
+                timeout=httpx.Timeout(35.0, connect=10.0),
                 headers={"User-Agent": config.USER_AGENT, "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
                          "Accept": "text/html,application/pdf,application/xhtml+xml,*/*;q=0.8"},
                 event_hooks={"request": [lambda req: _assert_public(str(req.url))]},
@@ -161,12 +161,16 @@ def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
                 _emit(trace, tool="fetch", status="warn", detail="Site's TLS certificate chain is incomplete; retrying")
                 continue
             last_err = "connection failed"
+        except httpx.ConnectTimeout:
+            last_err = "the site did not answer"
+            if attempt >= 1:  # two silent connects: the host is blocking us, stop early
+                break
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             last_err = type(e).__name__
         _emit(trace, tool="fetch", status="retry", detail=f"attempt {attempt + 1} failed: {last_err}")
         time.sleep(1.5 * (attempt + 1))
-    raise IngestError(f"Could not download the document ({last_err}). The site may be down or blocking "
-                      "cloud servers; try uploading the PDF instead.")
+    raise IngestError(f"Could not download the document ({last_err}). Some government sites block cloud "
+                      "servers: open the link in your browser, save the PDF and upload it here instead.")
 
 
 # ------------------------------------------------------------------ parse --
@@ -184,6 +188,22 @@ def looks_legacy_font(text: str) -> bool:
         return False
     hits = sum(text.count(m) for m in LEGACY_MARKERS)
     return hits / (len(text) / 1000) > 3
+
+
+# Code points that almost never occur in real Hindi but show up when a PDF's font has a
+# broken Unicode map (e.g. "औय" for "और", "सॊफॊधी" for "संबंधी").
+_RARE_DEVA = set("\u0929\u0931\u0934\u093A\u093B\u094A\u094E\u0955\u0956\u0957")
+_SIGN_AFTER_SPACE = regex.compile(r"(?:^|\s)[\u093A-\u094F\u0951-\u0957\u0962\u0963]", regex.M)
+
+
+def looks_garbled_devanagari(text: str) -> bool:
+    """True when a Devanagari text layer is unreliable and the page should be OCR'd."""
+    deva = len(regex.findall(r"\p{Devanagari}", text))
+    if deva < 80:
+        return False
+    rare = sum(1 for ch in text if ch in _RARE_DEVA)
+    orphan = len(_SIGN_AFTER_SPACE.findall(text))
+    return (rare + orphan) / deva * 1000 > 12
 
 
 _SCRIPT_TO_TESS = {"Devanagari": "hin", "Bengali": "ben", "Tamil": "tam", "Telugu": "tel", "Gujarati": "guj",
@@ -243,11 +263,11 @@ def parse_pdf(data: bytes, trace: Trace = None) -> ParsedDoc:
     warnings: list[str] = []
     if n > config.MAX_PDF_PAGES:
         warnings.append(f"Only the first {config.MAX_PDF_PAGES} of {n} pages were read.")
-    weak = [i for i, p in enumerate(pages) if len(p) < 80 or looks_legacy_font(p)]
-    legacy = any(looks_legacy_font(p) for p in pages)
+    weak = [i for i, p in enumerate(pages) if len(p) < 80 or looks_legacy_font(p) or looks_garbled_devanagari(p)]
+    legacy = any(looks_legacy_font(p) or looks_garbled_devanagari(p) for p in pages)
     ocr_pages = 0
     if pages and len(weak) >= max(1, len(pages) // 2):
-        reason = "legacy Hindi font detected" if legacy else "scanned pages detected"
+        reason = "unreliable Hindi text layer (legacy or broken font mapping)" if legacy else "scanned pages detected"
         _emit(trace, tool="ocr", status="start", detail=f"{reason}; running OCR on up to {config.MAX_OCR_PAGES} pages")
         lang = None
         for i in weak[: config.MAX_OCR_PAGES]:

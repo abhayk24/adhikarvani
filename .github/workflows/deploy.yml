@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      full:
+        description: "Also run full end-to-end compiles and Gemini latency diagnostics (uses AI quota)"
+        type: boolean
+        default: false
       e2e_url:
         description: "Official document URL for the end-to-end compile check (optional)"
         required: false
@@ -72,7 +76,10 @@ jobs:
       - name: Update the Hugging Face Space
         run: python scripts/deploy_space.py --upload-only --report report.md
       - name: Live check of AI providers, speech and official sources
-        run: python scripts/live_check.py --full --report report.md
+        run: python scripts/live_check.py --report report.md ${{ github.event.inputs.full == 'true' && '--full --diag' || '' }}
+        continue-on-error: true
+      - name: Compile official documents into the live dataset (skips ones already compiled)
+        run: python scripts/ingest.py --report report.md
         continue-on-error: true
       - name: Check the live app
         run: python scripts/deploy_space.py --verify-only --report report.md

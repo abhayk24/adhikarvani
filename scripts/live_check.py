@@ -90,7 +90,8 @@ def gemini_diagnostics(say) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", default="report.md")
-    ap.add_argument("--full", action="store_true", help="also compile a real document end to end")
+    ap.add_argument("--full", action="store_true", help="also compile real documents end to end")
+    ap.add_argument("--diag", action="store_true", help="per-model Gemini latency diagnostics")
     args = ap.parse_args()
     os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="av-live-"))
 
@@ -129,7 +130,8 @@ def main() -> int:
         except Exception as e:
             say(f"- ping {prof}: ❌ {e}")
 
-    gemini_diagnostics(say)
+    if args.diag:
+        gemini_diagnostics(say)
 
     # 2. Speech
     say("\n### Speech")
