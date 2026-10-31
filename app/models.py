@@ -116,8 +116,12 @@ class Stats(BaseModel):
     seconds: float = 0.0
 
 
+COMPILER_VERSION = 2  # bump when the compiler improves; ingestion recompiles older cards once
+
+
 class PolicyCard(BaseModel):
     id: str
+    compiler_version: int = 1
     title: str
     doc_type: str = "other"
     issuing_authority: Optional[str] = None

@@ -52,6 +52,7 @@ speech ─► Whisper ─► LLM extracts facts, each with the citizen's own wor
 ## 4. The AI logic, step by step
 
 ### 4.1 Reading the document (`ingest.py`)
+* **Sites that block cloud servers:** many Indian government sites refuse connections from foreign data centres. After two silent attempts the agent reads the page through a reader relay (r.jina.ai, which fetches from its own servers), then tries the Internet Archive's copy of the same URL. The card shows a "Read via" badge naming the route. If everything fails, the user is offered *Open the page / Upload the saved PDF / Paste its text*.
 * **Safety:** only `http(s)`; the host is resolved and private, loopback and link-local IPs are refused, and the check repeats on every redirect (SSRF protection). Downloads are capped at 25 MB.
 * **Government TLS quirk:** many `.gov.in` sites send an incomplete certificate chain. We retry once without verification, mark the card *"site certificate incomplete"* and store the document's SHA-256 fingerprint.
 * **PDF text** comes from PDFium. A page with under 80 characters is treated as scanned. Pages typed in old Hindi fonts (Kruti Dev) extract as Latin gibberish like `ljdkj` (सरकार); `looks_legacy_font` counts such markers and sends those pages to OCR too.
@@ -117,11 +118,13 @@ Numbers are extracted from the explainer, with Indic digits converted, `2.5 ल�
 
   | Profile | Used for | Tried first |
   |---|---|---|
-  | heavy | reading long documents | Gemini 3.5 Flash, then 2.5 Flash |
-  | write | explainers in 11 languages | Gemini |
-  | logic | compiling rules, repairing claims | Groq gpt-oss-120b |
-  | chat | voice-agent replies | Groq gpt-oss-120b |
+  | heavy | reading long documents, compiling rules | Gemini 3.5 Flash, then 2.5 Flash |
+  | write | explainers in 11 languages | Gemini Flash |
+  | logic | repairing failed claims | Groq gpt-oss-120b |
+  | chat | voice-agent replies | Gemini 3.5 Flash-Lite (large free quota, good Hindi) |
   | fast | fact-checks, understanding the citizen | Groq gpt-oss-20b |
+
+  We measured why: rule compilation on Groq produced 3 rules for PM-KISAN where Gemini produced 7 to 11, so rules stay on Gemini.
 
   The order can be changed without code through `GEMINI_MODELS`, `GROQ_MODELS` etc.
 * On 429 it reads `Retry-After` (or Groq's "try again in 7.5s") and cools that model down; daily-quota errors cool for 30 minutes; "request too large" skips to a model with a bigger budget; 404/decommissioned models and bad keys are disabled; 5xx and timeouts fail over.

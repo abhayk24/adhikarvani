@@ -25,8 +25,8 @@ from . import config, llm
 from .engine import validate_condition
 from .ingest import FetchedDoc, IngestError, best_pdf_link, fetch_url, injection_warnings, parse_document, sniff_kind
 from .languages import LANGS, describe, lang_or_default
-from .models import (CLAIM_KINDS, Claim, Explainer, PolicyCard, Rule, SourceMeta, Stats, VariableDef,
-                     Verification, now_iso)
+from .models import (CLAIM_KINDS, COMPILER_VERSION, Claim, Explainer, PolicyCard, Rule, SourceMeta, Stats,
+                     VariableDef, Verification, now_iso)
 from .retrieve import format_clauses, pack, rank_clauses, search
 from .segment import segment
 from .text_utils import slugify, unsupported_numbers
@@ -268,6 +268,8 @@ def n_fetch(s: dict) -> None:
     if existing and not inp.force:
         s["existing"] = existing
         s["_detail"] += " · already compiled, loading verified card"
+    elif existing:
+        s["replace_id"] = existing.id  # recompiling: keep the card's address
 
 
 @branch(("parse", "new document"), (END, "already compiled"))
@@ -484,7 +486,7 @@ def n_compile_rules(s: dict) -> None:
                     "\nPREVIOUS ANSWER:\n" + json.dumps(s.get("raw_rules"), ensure_ascii=False)[:6000])
     user = RULES_USER.format(conditions=_conditions_text(conds), catalog=catalog_lines(), feedback=feedback)
     try:
-        data, meta = llm.chat_json(task="compile rules", profile="logic", system=RULES_SYSTEM, user=user,
+        data, meta = llm.chat_json(task="compile rules", profile="heavy", system=RULES_SYSTEM, user=user,
                                    max_tokens=5000, trace=_trace(s), deadline_s=120)
     except llm.LLMError as e:
         s["raw_rules"] = None
@@ -629,7 +631,7 @@ def _draft_card(s: dict) -> PolicyCard:
     parsed = s["parsed"]
     meta = s.get("meta") or {}
     title = str(meta.get("title") or parsed.title_hint or fetched.filename or "Government document").strip()[:180]
-    pid = f"{slugify(title)}-{fetched.sha256[:6]}"
+    pid = s.get("replace_id") or f"{slugify(title)}-{fetched.sha256[:6]}"
     src = SourceMeta(url=fetched.url, final_url=fetched.final_url, filename=fetched.filename, kind=fetched.kind,
                      sha256=fetched.sha256, tls_verified=fetched.tls_verified, pages=len(parsed.pages),
                      language=parsed.language, ocr_used=parsed.ocr_used, ocr_pages=parsed.ocr_pages,
@@ -638,7 +640,7 @@ def _draft_card(s: dict) -> PolicyCard:
     used_ids = {c.clause_id for c in s["claims"]}
     keep_clauses = [c for c in s["clauses"] if c.id in used_ids]
     return PolicyCard(
-        id=pid, title=title, doc_type=str(meta.get("doc_type") or "other")[:40],
+        id=pid, title=title, compiler_version=COMPILER_VERSION, doc_type=str(meta.get("doc_type") or "other")[:40],
         issuing_authority=meta.get("issuing_authority") or None, jurisdiction=meta.get("jurisdiction") or None,
         effective_date=meta.get("effective_date") or None, summary=str(meta.get("summary") or "")[:1200],
         audience=[str(a)[:120] for a in (meta.get("audience") or [])][:8],

@@ -37,6 +37,7 @@ def main() -> int:
         return 0
     from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
     from app.compiler import CompileInput, compile_policy
+    from app.models import COMPILER_VERSION
     from app.store import Store
 
     api = HfApi(token=token)
@@ -64,9 +65,17 @@ def main() -> int:
         except Exception as e:
             say(f"- ❌ {url[:90]}: {str(e)[:160]}")
             continue
-        if card.id in before:
+        if card.id in before and card.compiler_version >= COMPILER_VERSION:
             say(f"- already in the dataset: {card.title} ({card.stats.verified} facts, {len(card.rules)} rules)")
             continue
+        if card.id in before:  # compiled by an older compiler: recompile once, same id
+            old = (card.stats.verified, len(card.rules))
+            try:
+                card = compile_policy(CompileInput(url=url, lang=args.lang, force=True), lambda e: None, store)
+            except Exception as e:
+                say(f"- ❌ recompile {url[:80]}: {str(e)[:160]}")
+                continue
+            say(f"- recompiled with compiler v{COMPILER_VERSION}: was {old[0]} facts / {old[1]} rules")
         st = card.stats
         say(f"- ✅ {card.title} in {time.time() - t0:.0f}s: {st.verified} verified, {st.corrected} repaired, "
             f"{st.rejected} rejected, {len(card.rules)} rules (source OCR: {card.source.ocr_used})")

@@ -67,7 +67,7 @@ PROVIDERS: list[Provider] = [
             "write": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
             "fast": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]),
             "logic": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
-            "chat": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-2.5-flash"]),
+            "chat": _env_list("GEMINI_CHAT_MODELS", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"]),
         },
         char_budget=120_000,
     ),
@@ -106,13 +106,14 @@ PROVIDERS: list[Provider] = [
 ]
 PROVIDER_BY_NAME = {p.name: p for p in PROVIDERS}
 
-# Gemini's free daily quota is small, so it is used where it matters most (long documents,
-# Indian-language writing); structured reasoning and chat go to Groq first.
+# Gemini Flash's free daily quota is small, so it is used where quality matters most (reading
+# documents, compiling rules, Indian-language explainers); repairs go to Groq first and voice
+# replies to Gemini Flash-Lite, whose free quota is much larger.
 PROFILE_ORDER = {
     "heavy": ["gemini", "groq", "cerebras", "mistral", "openrouter"],   # read long documents
     "write": ["gemini", "groq", "cerebras", "mistral", "openrouter"],   # explainers in 11 languages
     "logic": ["groq", "cerebras", "gemini", "mistral", "openrouter"],   # rules, repairs
-    "chat": ["groq", "cerebras", "gemini", "mistral", "openrouter"],    # voice-agent replies
+    "chat": ["gemini", "groq", "cerebras", "mistral", "openrouter"],    # voice replies (Flash-Lite: high quota, good Hindi)
     "fast": ["groq", "gemini", "cerebras", "mistral", "openrouter"],    # short checks
 }
 PROFILE_TIMEOUT = {"heavy": 150.0, "write": 90.0, "logic": 120.0, "chat": 45.0, "fast": 45.0}   # total per attempt while streaming

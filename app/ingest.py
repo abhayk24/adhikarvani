@@ -214,8 +214,8 @@ def _fetch_reader(url: str, trace: Trace) -> FetchedDoc:
 
 
 def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
-    """Fetch an official document. If the site blocks cloud servers, fall back to the Internet
-    Archive's copy of the same URL, then to a reader relay; the card records which route was used."""
+    """Fetch an official document. If the site blocks cloud servers, fall back to a reader relay
+    (fresh text), then to the Internet Archive's copy of the same URL; the card records the route."""
     url = url.strip()
     if not urlparse(url).scheme:
         url = "https://" + url
@@ -225,8 +225,8 @@ def fetch_url(url: str, trace: Trace = None) -> FetchedDoc:
     except _Blocked as e:
         reasons = [f"direct: {e}"]
         _emit(trace, tool="fetch", status="warn",
-              detail=f"{urlparse(url).hostname} blocked us ({e}); trying the Internet Archive copy")
-    for name, route in (("Internet Archive", _fetch_archive), ("reader relay", _fetch_reader)):
+              detail=f"{urlparse(url).hostname} blocked us ({e}); trying a reader relay")
+    for name, route in (("reader relay", _fetch_reader), ("Internet Archive", _fetch_archive)):
         try:
             doc = route(url, trace)
             _emit(trace, tool="fetch", status="ok", detail=f"read via {name}: {doc.via}")
