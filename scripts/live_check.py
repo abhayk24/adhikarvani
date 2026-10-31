@@ -159,6 +159,8 @@ def main() -> int:
 
     # 3. Live official sources
     say("\n### Official sources (fetched from this CI runner)")
+    for line in sources.feed_probe():
+        say(f"- PIB probe: {line}")
     for lang in ("en", "hi"):
         try:
             feed = sources.pib_feed(lang)
@@ -204,15 +206,29 @@ def main() -> int:
         except Exception as e:
             say(f"- ❌ {type(e).__name__}: {e}")
             say("```\n" + traceback.format_exc()[-1500:] + "\n```")
+        dbg: dict = {}
+        try:
+            doc = fetch_url(OFFICIAL_DOCS[3][1])
+            sample = parse_document(doc).pages[0][:240]
+            say(f"- Hindi PDF text sample: {sample!r}")
+        except Exception as e:
+            say(f"- Hindi PDF sample: {type(e).__name__}")
         try:
             t0 = time.time()
-            hi = compile_policy(CompileInput(url=OFFICIAL_DOCS[3][1], lang="hi"), lambda e: None, store)
+            hi = compile_policy(CompileInput(url=OFFICIAL_DOCS[3][1], lang="hi"), lambda e: None, store, debug=dbg)
             say(f"- ✅ Hindi PDF “{hi.title}” in {time.time() - t0:.0f} s: {hi.stats.verified} verified, "
                 f"{hi.stats.rejected} rejected, {len(hi.rules)} rules")
             for c in hi.claims[:3]:
                 say(f"  - [{c.kind}] {c.text}  _(quote: {c.quote[:70]})_")
         except Exception as e:
             say(f"- ❌ Hindi PDF compile: {type(e).__name__}: {e}")
+            st = dbg.get("state") or {}
+            from app.verify import skeleton
+            for c in (st.get("claims") or [])[:5]:
+                say(f"  - claim {c.id} [{c.kind}] quote={c.quote[:80]!r} clause={c.clause_id} "
+                    f"result={c.verification.method}/{c.verification.reason[:60]}")
+            for cl in (st.get("clauses") or [])[:3]:
+                say(f"  - clause {cl.id}: {cl.text[:100]!r}")
         say("\n<details><summary>Trace</summary>\n")
         for ev in events:
             if ev.get("type") in ("node", "llm", "guard", "info", "tool"):

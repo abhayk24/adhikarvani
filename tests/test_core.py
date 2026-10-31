@@ -154,3 +154,18 @@ def test_coerce_units():
     assert coerce_value(CANONICAL["annual_family_income"], 10000, "per_month") == 120000
     assert coerce_value(CANONICAL["state"], "UP") == "uttar pradesh"
     assert coerce_value(CANONICAL["is_income_tax_payer"], "nahi") is False
+
+
+def test_hindi_visual_order_pdf_text_still_verifies():
+    # Text as many Hindi PDFs extract it: vowel signs before the consonant, reph moved,
+    # words split by stray spaces.
+    garbled = "प्र धानमं त्री िक सान सम् मान िन िध योज ना के अं तगर्त पा त्र िक सान पिर वार को लाभ िमले गा।"
+    cl = segment([garbled])
+    idx = ClauseIndex(cl)
+    claim = Claim(id="K1", kind="benefit", text="x", clause_id=cl[0].id,
+                  quote="किसान सम्मान निधि योजना के अंतर्गत पात्र किसान परिवार")
+    v = verify_quote(claim, idx)
+    assert v.quote_found and v.method == "normalised", v
+    wrong = Claim(id="K2", kind="benefit", text="x", clause_id=cl[0].id,
+                  quote="सभी नागरिकों को मुफ्त बिजली और पानी मिलेगा")
+    assert not verify_quote(wrong, idx).quote_found

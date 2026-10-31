@@ -321,7 +321,7 @@
     ["deadline", "Dates and time limits"], ["obligation", "Duties"], ["penalty", "Penalties"],
     ["impact", "Other effects"], ["other", "Other facts"],
   ];
-  const METHOD = { exact: "exact quote", fuzzy: "close match", relocated: "found in another clause" };
+  const METHOD = { exact: "exact quote", fuzzy: "close match", relocated: "found in another clause", normalised: "matched after fixing the PDF's Hindi text order" };
   const OPS = { "==": "=", "!=": "≠", ">=": "≥", "<=": "≤", ">": ">", "<": "<", in: "is one of", not_in: "is not one of" };
 
   function condText(c) {

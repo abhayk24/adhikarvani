@@ -60,10 +60,11 @@ PROVIDERS: list[Provider] = [
     Provider(
         "gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY",
         {
-            "heavy": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest", _GEMINI_FLASH]),
-            "write": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest", _GEMINI_FLASH]),
-            "fast": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite",
-                                                     "gemini-flash-lite-latest", _GEMINI_LITE]),
+            # Measured from CI (Oct 2026): 3.5-flash ~2 s, 2.5-flash ~0.6 s to first token;
+            # 3.8-flash and the *-latest aliases stalled on the free tier, so they are not used.
+            "heavy": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
+            "write": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
+            "fast": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]),
         },
         char_budget=120_000,
     ),

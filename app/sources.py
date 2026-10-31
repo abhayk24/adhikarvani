@@ -22,6 +22,13 @@ PIB_FEEDS = {
     "en": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
     "hi": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=2&Regid=3",
 }
+# PIB's English feed has served Hindi items at times; these variants are also read
+# and every item is sorted by script, so English shows whenever any feed carries it.
+PIB_EXTRA = [
+    "https://www.pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3&reg=3",
+    "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=1",
+    "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1",
+]
 _cache: dict[str, tuple[float, dict]] = {}
 _lock = threading.Lock()
 TTL = 600
@@ -70,6 +77,23 @@ def _fetch_feed(url: str) -> list[dict]:
     return items
 
 
+def _safe_fetch(url: str) -> tuple[list[dict], Optional[str]]:
+    try:
+        return _fetch_feed(url), None
+    except Exception as e:  # one bad variant must not break the feed
+        return [], f"{url}: {e}"
+
+
+def feed_probe() -> list[str]:
+    """Diagnostics: how many English/Hindi items each feed URL returns."""
+    out = []
+    for url in list(PIB_FEEDS.values()) + PIB_EXTRA:
+        items, err = _safe_fetch(url)
+        en = sum(1 for it in items if it["lang"] == "en")
+        out.append(f"{url} → {len(items)} items, {en} English" + (f" ({err[:80]})" if err else ""))
+    return out
+
+
 def pib_feed(lang: str = "en", limit: int = 30) -> dict:
     """Latest PIB releases in the requested language.
 
@@ -83,14 +107,17 @@ def pib_feed(lang: str = "en", limit: int = 30) -> dict:
         merged, fetched_at, stale = hit[1]["items"], hit[1]["fetched_at"], False
     else:
         merged, errors, seen = [], [], set()
-        for url in PIB_FEEDS.values():
-            try:
-                for it in _fetch_feed(url):
-                    if it["link"] not in seen:
-                        seen.add(it["link"])
-                        merged.append(it)
-            except SourceError as e:
-                errors.append(str(e))
+        from concurrent.futures import ThreadPoolExecutor
+        urls = list(PIB_FEEDS.values()) + PIB_EXTRA
+        with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+            results = list(pool.map(lambda u: _safe_fetch(u), urls))
+        for items, err in results:
+            if err:
+                errors.append(err)
+            for it in items:
+                if it["link"] not in seen:
+                    seen.add(it["link"])
+                    merged.append(it)
         if merged:
             merged.sort(key=lambda it: it["published"] or "", reverse=True)
             fetched_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()

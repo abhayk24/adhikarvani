@@ -76,6 +76,9 @@ jobs:
         continue-on-error: true
       - name: Check the live app
         run: python scripts/deploy_space.py --verify-only --report report.md
+      - name: Walk through the live app like a user
+        run: python scripts/check_app.py --report report.md
+        continue-on-error: true
       - name: Publish the report to the ci-reports branch
         if: always()
         run: |
