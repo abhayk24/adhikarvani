@@ -142,14 +142,27 @@ def main() -> int:
         say("## Deploy\n\n**HF_TOKEN secret is missing.** Add it in GitHub → Settings → Secrets and variables → Actions.")
         return 1
     api = HfApi(token=token)
-    user = api.whoami()["name"]
+    me = api.whoami()
+    user = me["name"]
+    role = ((me.get("auth") or {}).get("accessToken") or {}).get("role")
+    say(f"- Token owner: {user}; token type: {role or 'unknown'}")
     space = os.getenv("HF_SPACE", "").strip() or f"{user}/adhikarvani"
     host = f"https://{space.replace('/', '-').replace('_', '-').replace('.', '-').lower()}.hf.space"
     sha = os.getenv("GITHUB_SHA", "local")[:7]
     ok = True
     if not args.verify_only:
         say(f"## Deploy to https://huggingface.co/spaces/{space} (commit {sha})\n")
-        upload(api, space, token, sha, say)
+        try:
+            upload(api, space, token, sha, say)
+        except Exception as e:
+            import traceback
+            say(f"- ❌ Upload failed: {type(e).__name__}: {str(e)[:600]}")
+            if "403" in str(e) or "401" in str(e) or "rights" in str(e).lower() or "permission" in str(e).lower():
+                say("- The HF_TOKEN probably has read-only access. Create a token with **Write** permission at "
+                    "https://huggingface.co/settings/tokens and update the HF_TOKEN repository secret.")
+            say("\n```\n" + traceback.format_exc()[-2000:] + "\n```")
+            report.close()
+            return 1
         say(f"- App URL: {host}")
     if not args.upload_only:
         say("\n## Space status\n")
