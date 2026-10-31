@@ -4,6 +4,10 @@
 
 Track: **Theme 1, Civic Pulse, Digital Governance & Public Information**, problem 1 (*Multilingual Policy, Rights & Scheme Explainer*).
 
+**Live app:** https://adhikarvani.onrender.com · **Hugging Face Space:** https://huggingface.co/spaces/Abhayk24/adhikarvani · **Study guide:** [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)
+
+> The free server sleeps when idle; a ping keeps it awake, but if the first load is slow, give it up to a minute.
+
 ---
 
 ## Why this is different

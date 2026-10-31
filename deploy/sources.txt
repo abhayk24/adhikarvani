@@ -1,8 +1,9 @@
 # Official documents compiled by the CI ingestion job (scripts/ingest.py) and
 # published to the Hugging Face dataset the live app reads. One URL per line.
 # Some of these sites block cloud servers in Asia, so CI (US) fetches them.
+# A trailing " !" recompiles that document on the next run (remove it afterwards).
 https://pmkisan.gov.in/Documents/RevisedPM-KISANOperationalGuidelines(English).pdf
 https://pmkisan.gov.in/Documents/%E0%A4%AA%E0%A5%8D%E0%A4%B0%E0%A4%A7%E0%A4%BE%E0%A4%A8%E0%A4%AE%E0%A4%82%E0%A4%A4%E0%A5%8D%E0%A4%B0%E0%A5%80%20%E0%A4%95%E0%A4%BF%E0%A4%B8%E0%A4%BE%E0%A4%A8%20%E0%A4%B8%E0%A4%AE%E0%A5%8D%E0%A4%AE%E0%A4%BE%E0%A4%A8%20%E0%A4%A8%E0%A4%BF%E0%A4%A7%E0%A4%BF.pdf
 https://msme1connect.up.gov.in/GovernmentScheme/GovernmentScheme638769634969101318.pdf
 https://www.meghalaya.gov.in/sites/default/files/press_release/Pension_Scheme_0.pdf
-https://www.pfrda.org.in/documents/33652/307349/APY%20Subscriber%20Information%20Brochure%20English
+https://www.pfrda.org.in/documents/33652/307349/APY%20Subscriber%20Information%20Brochure%20English !

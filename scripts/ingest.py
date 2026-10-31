@@ -55,7 +55,9 @@ def main() -> int:
     config.AUDIO_DIR = work / "audio"
 
     say(f"\n## Ingestion of official documents into {repo}\n")
-    urls = [l.strip() for l in Path(args.sources).read_text().splitlines() if l.strip() and not l.startswith("#")]
+    lines = [l.strip() for l in Path(args.sources).read_text().splitlines() if l.strip() and not l.startswith("#")]
+    force_urls = {l.rstrip("!").strip() for l in lines if l.endswith("!")}  # "url !" = recompile this run
+    urls = [l.rstrip("!").strip() for l in lines]
     ops = []
     # One card per source URL: keep the best (direct source first, then most verified facts).
     by_url: dict[str, list] = {}
@@ -75,7 +77,7 @@ def main() -> int:
     for url in urls:
         t0 = time.time()
         have = current.get(url)
-        if have and have.compiler_version >= COMPILER_VERSION:
+        if have and have.compiler_version >= COMPILER_VERSION and url not in force_urls:
             say(f"- already in the dataset: {have.title} ({have.stats.verified} facts, {len(have.rules)} rules)")
             continue
         try:

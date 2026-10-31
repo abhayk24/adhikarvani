@@ -225,3 +225,46 @@ def test_blocked_government_site_falls_back_to_archive_then_reader(monkeypatch):
     monkeypatch.setattr(ingest.httpx, "get", lambda *a, **k: Nothing())
     with pytest.raises(ingest.IngestError, match="upload the PDF"):
         ingest.fetch_url("https://scholarship.up.gov.in/")
+
+
+def test_dataset_sync_updates_and_removes_but_never_clobbers_local_changes(tmp_path, monkeypatch):
+    import os
+    import time as _t
+    from types import SimpleNamespace
+
+    import huggingface_hub
+
+    from app.store import Store
+    remote = {"policies/a.json": "blob1", "policies/b.json": "blob1"}
+
+    class FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def list_repo_tree(self, repo, repo_type=None, recursive=False):
+            return [SimpleNamespace(path=p, blob_id=b) for p, b in remote.items()]
+
+    def fake_download(repo, path, repo_type=None, local_dir=None, token=None):
+        f = tmp_path / path
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(f"{path}:{remote[path]}")
+        return str(f)
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    st = Store(tmp_path)
+    st.repo = "user/store"
+    assert st.pull_new() == 2
+    remote["policies/a.json"] = "blob2"          # CI updated a
+    del remote["policies/b.json"]                # CI removed b
+    (tmp_path / "policies" / "c.json").write_text("made on the server")  # app's own card
+    assert st.pull_new() == 2
+    assert (tmp_path / "policies" / "a.json").read_text().endswith("blob2")
+    assert not (tmp_path / "policies" / "b.json").exists()
+    assert (tmp_path / "policies" / "c.json").exists()
+    _t.sleep(1.1)
+    (tmp_path / "policies" / "a.json").write_text("explainer added on the server")  # local change
+    os.utime(tmp_path / "policies" / "a.json")
+    remote["policies/a.json"] = "blob3"
+    st.pull_new()
+    assert (tmp_path / "policies" / "a.json").read_text() == "explainer added on the server"

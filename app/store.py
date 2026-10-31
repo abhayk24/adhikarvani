@@ -54,12 +54,16 @@ class Store:
                                       token=config.HF_TOKEN, allow_patterns=["policies/*.json", "audio/*.mp3"])
                 except Exception as e:  # empty repo on first run
                     log.info("dataset restore skipped: %s", e)
+                self.repo = repo
+                try:
+                    self.pull_new()  # records blob ids of the restored files
+                except Exception as e:
+                    log.info("manifest init skipped: %s", e)
                 self.scheduler = CommitScheduler(repo_id=repo, repo_type="dataset",
                                                  folder_path=self.data_dir, every=2, token=config.HF_TOKEN,
                                                  allow_patterns=["policies/*.json", "audio/*.mp3"],
                                                  private=not config.STORE_PUBLIC)
                 self.sync_status = f"synced to dataset {repo}"
-                self.repo = repo
                 threading.Thread(target=self._refresh_loop, daemon=True).start()
             except Exception as e:
                 self.sync_status = f"local only (dataset sync failed: {type(e).__name__})"
@@ -75,21 +79,53 @@ class Store:
             except Exception as e:  # never let a sync hiccup hurt the app
                 log.warning("dataset refresh failed: %s", e)
 
+    def _manifest_path(self) -> Path:
+        return self.data_dir / ".hub-manifest.json"
+
+    def _load_manifest(self) -> dict:
+        try:
+            return json.loads(self._manifest_path().read_text())
+        except Exception:
+            return {}
+
     def pull_new(self) -> int:
-        """Download cards (and their audio) that other writers, such as the CI ingestion job,
-        added to the dataset. Files that already exist locally are never overwritten."""
+        """Mirror cards that other writers (the CI ingestion job) add, update or remove in the dataset.
+
+        A manifest remembers which local files came from the hub and their blob ids. Files the
+        app created or changed itself are never overwritten or deleted (they are pushed by the
+        scheduler instead)."""
         if not self.repo:
             return 0
         from huggingface_hub import HfApi, hf_hub_download
-        names = HfApi(token=config.HF_TOKEN).list_repo_files(self.repo, repo_type="dataset")
-        new = [n for n in names if (n.startswith("policies/") and n.endswith(".json")
-                                    or n.startswith("audio/") and n.endswith(".mp3"))
-               and not (self.data_dir / n).exists()]
-        for n in new:
-            hf_hub_download(self.repo, n, repo_type="dataset", local_dir=str(self.data_dir), token=config.HF_TOKEN)
-        if any(n.startswith("policies/") for n in new):
+        api = HfApi(token=config.HF_TOKEN)
+        remote = {}
+        for f in api.list_repo_tree(self.repo, repo_type="dataset", recursive=True):
+            path = getattr(f, "path", "")
+            if (path.startswith("policies/") and path.endswith(".json")) or (path.startswith("audio/") and path.endswith(".mp3")):
+                remote[path] = getattr(f, "blob_id", None) or getattr(f, "oid", None)
+        manifest = self._load_manifest()
+        changed = 0
+        for path, blob in remote.items():
+            local = self.data_dir / path
+            rec = manifest.get(path)
+            ours = local.exists() and (rec is None or abs(local.stat().st_mtime - rec.get("mtime", 0)) > 1)
+            if local.exists() and (ours or (rec and rec.get("blob") == blob)):
+                continue  # created/changed here, or already current
+            with self._writer():
+                hf_hub_download(self.repo, path, repo_type="dataset", local_dir=str(self.data_dir), token=config.HF_TOKEN)
+            manifest[path] = {"blob": blob, "mtime": local.stat().st_mtime}
+            changed += 1
+        for path, rec in list(manifest.items()):
+            local = self.data_dir / path
+            if path not in remote and path.startswith("policies/"):
+                if local.exists() and abs(local.stat().st_mtime - rec.get("mtime", 0)) <= 1:
+                    local.unlink()
+                    changed += 1
+                manifest.pop(path, None)
+        self._manifest_path().write_text(json.dumps(manifest))
+        if changed:
             self.reload()
-        return len(new)
+        return changed
 
     def reload(self) -> None:
         with self._lock:
