@@ -86,6 +86,11 @@ jobs:
       - name: Walk through the live app like a user
         run: python scripts/check_app.py --report report.md
         continue-on-error: true
+      - name: Screenshot the live app
+        run: |
+          pip install -q playwright && python -m playwright install --with-deps chromium > /dev/null
+          python scripts/screenshot_app.py --out /tmp/shots
+        continue-on-error: true
       - name: Publish the report to the ci-reports branch
         if: always()
         run: |
@@ -97,6 +102,7 @@ jobs:
           git checkout --orphan ci-report-tmp
           git rm -rf -q . || true
           cp /tmp/report.md report.md
-          git add -f report.md
+          [ -d /tmp/shots ] && cp -r /tmp/shots shots || true
+          git add -f report.md shots 2>/dev/null || git add -f report.md
           git commit -q -m "CI report for ${GITHUB_SHA::7}"
           git push -q -f origin HEAD:ci-reports
