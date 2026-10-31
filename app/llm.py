@@ -63,10 +63,12 @@ PROVIDERS: list[Provider] = [
         {
             # Measured from CI (Oct 2026): 3.5-flash ~2 s, 2.5-flash ~0.6 s to first token;
             # 3.8-flash and the *-latest aliases stalled on the free tier, so they are not used.
-            "heavy": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
-            "write": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
+            "heavy": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite",
+                                                 "gemini-3.1-flash-lite"]),
+            "write": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite",
+                                                 "gemini-3.1-flash-lite"]),
             "fast": _env_list("GEMINI_FAST_MODELS", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]),
-            "logic": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash"]),
+            "logic": _env_list("GEMINI_MODELS", ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite"]),
             "chat": _env_list("GEMINI_CHAT_MODELS", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"]),
         },
         char_budget=120_000,

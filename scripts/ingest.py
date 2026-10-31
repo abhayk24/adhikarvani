@@ -35,7 +35,7 @@ def main() -> int:
     if not token:
         say("## Ingestion skipped: no HF_TOKEN")
         return 0
-    from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
+    from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi, hf_hub_download
     from app.compiler import CompileInput, compile_policy
     from app.models import COMPILER_VERSION
     from app.store import Store
@@ -57,30 +57,53 @@ def main() -> int:
     say(f"\n## Ingestion of official documents into {repo}\n")
     urls = [l.strip() for l in Path(args.sources).read_text().splitlines() if l.strip() and not l.startswith("#")]
     ops = []
+    # One card per source URL: keep the best (direct source first, then most verified facts).
+    by_url: dict[str, list] = {}
+    for card in store.all_cards():
+        if card.source.url:
+            by_url.setdefault(card.source.url, []).append(card)
+    for url_, cards in by_url.items():
+        if len(cards) > 1:
+            cards.sort(key=lambda c: (c.source.via is None, c.compiler_version, c.stats.verified), reverse=True)
+            for dup in cards[1:]:
+                ops.append(CommitOperationDelete(f"policies/{dup.id}.json"))
+                (work / "policies" / f"{dup.id}.json").unlink(missing_ok=True)
+                say(f"- removing duplicate card {dup.id} (kept {cards[0].id})")
+    store.reload()
+    current = {c.source.url: c for c in store.all_cards() if c.source.url}
+    from app.ingest import fetch_url
     for url in urls:
         t0 = time.time()
+        have = current.get(url)
+        if have and have.compiler_version >= COMPILER_VERSION:
+            say(f"- already in the dataset: {have.title} ({have.stats.verified} facts, {len(have.rules)} rules)")
+            continue
+        try:
+            doc = fetch_url(url)
+        except Exception as e:
+            say(f"- ❌ could not fetch {url[:80]}: {str(e)[:140]}")
+            continue
+        if have and have.source.via is None and doc.via:
+            say(f"- kept {have.title}: the site is only reachable through a relay right now, and the earlier "
+                f"card was read directly from the official file")
+            continue
         before = {r["id"] for r in store.list()}
         try:
-            card = compile_policy(CompileInput(url=url, lang=args.lang), lambda e: None, store)
+            card = compile_policy(CompileInput(url=url, lang=args.lang, force=have is not None, prefetched=doc),
+                                  lambda e: None, store)
         except Exception as e:
             say(f"- ❌ {url[:90]}: {str(e)[:160]}")
             continue
-        if card.id in before and card.compiler_version >= COMPILER_VERSION:
-            say(f"- already in the dataset: {card.title} ({card.stats.verified} facts, {len(card.rules)} rules)")
+        if card.id in before and not have:
+            say(f"- already in the dataset (same file under another link): {card.title}")
             continue
-        if card.id in before:  # compiled by an older compiler: recompile once, same id
-            old = (card.stats.verified, len(card.rules))
-            try:
-                card = compile_policy(CompileInput(url=url, lang=args.lang, force=True), lambda e: None, store)
-            except Exception as e:
-                say(f"- ❌ recompile {url[:80]}: {str(e)[:160]}")
-                continue
-            say(f"- recompiled with compiler v{COMPILER_VERSION}: was {old[0]} facts / {old[1]} rules")
+        if have and have.id != card.id:
+            ops.append(CommitOperationDelete(f"policies/{have.id}.json"))
         st = card.stats
         conds = [c for c in card.claims if c.kind in ("eligibility", "exclusion")]
-        say(f"- ✅ {card.title} in {time.time() - t0:.0f}s: {st.verified} verified, {st.corrected} repaired, "
-            f"{st.rejected} rejected, {len(conds)} conditions → {len(card.rules)} rules "
-            f"(source OCR: {card.source.ocr_used}; models: {', '.join(card.models_used)})")
+        say(f"- ✅ {'re' if have else ''}compiled {card.title} in {time.time() - t0:.0f}s: {st.verified} verified, "
+            f"{st.corrected} repaired, {st.rejected} rejected, {len(conds)} conditions → {len(card.rules)} rules "
+            f"(OCR: {card.source.ocr_used}; via: {card.source.via or 'direct'}; models: {', '.join(card.models_used)})")
         for nc in card.not_compilable[:4]:
             say(f"  - not compilable {nc.get('claim_id')}: {str(nc.get('reason'))[:120]}")
         for issue in card.rule_issues[:6]:
@@ -89,9 +112,11 @@ def main() -> int:
         for ex in card.explainers.values():
             if ex.audio and (work / "audio" / ex.audio).exists():
                 ops.append(CommitOperationAdd(f"audio/{ex.audio}", str(work / "audio" / ex.audio)))
+    remote_now = set(api.list_repo_files(repo, repo_type="dataset"))
+    ops = [o for o in ops if not (isinstance(o, CommitOperationDelete) and o.path_in_repo not in remote_now)]
     if ops:
         api.create_commit(repo, repo_type="dataset", operations=ops,
-                          commit_message=f"Ingest {len([o for o in ops if o.path_in_repo.startswith('policies/')])} card(s)")
+                          commit_message=f"Ingest: {len(ops)} change(s)")
         say(f"- Published {len(ops)} file(s); the live app picks them up within 5 minutes.")
     out.close()
     return 0

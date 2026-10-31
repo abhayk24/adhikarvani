@@ -242,6 +242,7 @@ class CompileInput:
     filename: Optional[str] = None
     lang: str = "hi"
     force: bool = False
+    prefetched: Optional[FetchedDoc] = None   # a document already downloaded (ingestion job)
 
 
 def _trace(state: dict) -> Callable[[dict], None]:
@@ -257,7 +258,12 @@ def _trace(state: dict) -> Callable[[dict], None]:
 
 def n_fetch(s: dict) -> None:
     inp: CompileInput = s["inp"]
-    if inp.file_bytes is not None:
+    if inp.prefetched is not None:
+        s["fetched"] = inp.prefetched
+        d = inp.prefetched.domain
+        s["_detail"] = f"{d} · {'official government domain' if config.is_official_domain(d) else 'non-government domain'}" + \
+                       (f" · {inp.prefetched.via}" if inp.prefetched.via else "")
+    elif inp.file_bytes is not None:
         if len(inp.file_bytes) > config.MAX_DOWNLOAD_BYTES:
             raise CompileError("File is larger than 25 MB.")
         kind = sniff_kind(inp.file_bytes, "", inp.filename or "")
@@ -548,6 +554,22 @@ def _clean_new_vars(raw: Any) -> list[VariableDef]:
     return out
 
 
+def _simplify(cond: Any) -> Any:
+    """Remove empty all/any groups and unwrap single-item groups (common model slips)."""
+    if not isinstance(cond, dict):
+        return cond
+    for key in ("all", "any"):
+        if key in cond and isinstance(cond[key], list):
+            items = [x for x in (_simplify(c) for c in cond[key]) if x]
+            if not items:
+                return {}
+            return items[0] if len(items) == 1 else {key: items}
+    if "not" in cond:
+        inner = _simplify(cond["not"])
+        return {"not": inner} if inner else {}
+    return cond
+
+
 def _infer_vars(cond: Any, defs: dict[str, VariableDef], out: dict[str, VariableDef]) -> None:
     """Self-heal: a variable used in a rule but never declared gets its type from that use."""
     if not isinstance(cond, dict):
@@ -590,6 +612,7 @@ def n_validate_rules(s: dict) -> None:
         inferred: dict[str, VariableDef] = {}
         for r in raw.get("rules") or []:
             if isinstance(r, dict):
+                r["condition"] = _simplify(r.get("condition"))
                 _infer_vars(r.get("condition"), dict(CANONICAL) | var_acc, inferred)
         for name, v in inferred.items():
             var_acc[name] = v
