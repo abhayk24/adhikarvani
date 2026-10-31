@@ -268,3 +268,10 @@ def test_dataset_sync_updates_and_removes_but_never_clobbers_local_changes(tmp_p
     remote["policies/a.json"] = "blob3"
     st.pull_new()
     assert (tmp_path / "policies" / "a.json").read_text() == "explainer added on the server"
+
+
+def test_greeting_is_stripped_after_the_first_turn():
+    from app.agent import _strip_greeting
+    assert _strip_greeting("नमस्ते! क्या आपके पास खेती की जमीन है?") == "क्या आपके पास खेती की जमीन है?"
+    assert _strip_greeting("Namaste, how old are you?") == "how old are you?"
+    assert _strip_greeting("क्या आपके पास खेती की जमीन है?") == "क्या आपके पास खेती की जमीन है?"

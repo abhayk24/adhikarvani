@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import regex
+
 from . import llm, voice
 from .engine import all_var_defs, condition_vars, evaluate, plan_next_question
 from .languages import LANGS, describe, lang_or_default
@@ -125,6 +127,16 @@ def extract_facts(text: str, last_var: Optional[str], var_defs: dict[str, Variab
     return accepted, rejected, (str(q)[:300] if q else None)
 
 
+_GREETING = regex.compile(r"^\s*(?:नमस्ते|नमस्कार|namaste|namaskar|hello|hi|வணக்கம்|নমস্কার|నమస్కారం|ನಮಸ್ಕಾರ|നമസ്കാരം|"
+                          r"નમસ્તે|ਸਤ ਸ੍ਰੀ ਅਕਾਲ|السلام علیکم)(?:\s*(?:जी|ji))?\s*[!,।.]*\s*", regex.I)
+
+
+def _strip_greeting(text: str) -> str:
+    """Models sometimes greet on every turn; only the first turn should."""
+    out = _GREETING.sub("", text, count=1)
+    return out if len(out) > 10 else text
+
+
 def _fallback_say(sit: dict) -> str:
     parts = []
     if sit.get("mode") == "radar":
@@ -220,6 +232,8 @@ def run_turn(inp: TurnInput, store, trace: Trace = None) -> dict:
                                     user=REPLY_USER.format(situation=json.dumps(sit, ensure_ascii=False, indent=1)),
                                     max_tokens=900, temperature=0.3, trace=trace, deadline_s=50)
             say = str(data.get("say") or "").strip() if isinstance(data, dict) else ""
+            if not sit.get("greeting"):
+                say = _strip_greeting(say)
         except llm.LLMError:
             say = None
             break
