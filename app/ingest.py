@@ -269,7 +269,12 @@ def looks_garbled_devanagari(text: str) -> bool:
         return False
     rare = sum(1 for ch in text if ch in _RARE_DEVA)
     orphan = len(_SIGN_AFTER_SPACE.findall(text))
-    return (rare + orphan) / deva * 1000 > 12
+    if (rare + orphan) / deva * 1000 > 12:
+        return True
+    # Words broken into syllables ("यो जना के अंतर्गत ला भ"): in real Hindi about a quarter of
+    # words are 1-2 letters long; in these broken layers it is over half.
+    words = regex.findall(r"\p{Devanagari}+", text)
+    return len(words) >= 60 and sum(len(w) <= 2 for w in words) / len(words) > 0.42
 
 
 _SCRIPT_TO_TESS = {"Devanagari": "hin", "Bengali": "ben", "Tamil": "tam", "Telugu": "tel", "Gujarati": "guj",

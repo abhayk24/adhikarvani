@@ -275,3 +275,10 @@ def test_greeting_is_stripped_after_the_first_turn():
     assert _strip_greeting("नमस्ते! क्या आपके पास खेती की जमीन है?") == "क्या आपके पास खेती की जमीन है?"
     assert _strip_greeting("Namaste, how old are you?") == "how old are you?"
     assert _strip_greeting("क्या आपके पास खेती की जमीन है?") == "क्या आपके पास खेती की जमीन है?"
+
+
+def test_hindi_split_into_syllables_is_detected():
+    from app.ingest import looks_garbled_devanagari
+    broken = ("यो जना के अंतर्गत ला भ पा त्र ला भा र्थी को प्रशि क्षण अवधि के दौ रा न प्रति मा ह की "
+              "सहा यता रा शि अधि कतम छह मा ह तक सी धे उसके बैंक खा ते में दी जा एगी ") * 3
+    assert looks_garbled_devanagari(broken)
